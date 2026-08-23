@@ -1,8 +1,8 @@
 # 桌面 Agent 技术选型与实施边界
 
-> 状态：v0.5（安全默认已冻结；宿主模型、持久化恢复与 MVP 契约待 Spike 验证后冻结）
+> 状态：v0.6（**架构冻结，进入实施**。Spike 验收结果与宿主模型 ADR 见 docs/spike-report.md）
 >
-> 日期：2026-08-24
+> 日期：2026-08-24（v0.6：Spike 通过，冻结宿主模型与构建工具链，锁定依赖版本）
 >
 > 目标：基于 pi SDK 与 Electron 构建本地 coding agent 桌面客户端。
 
@@ -81,7 +81,9 @@ flowchart TB
 - **PermissionManager**：拦截工具调用、等待审批、保存最小审计记录。
 - **SessionService**：调用 pi 的会话 API；不重写 session runtime。
 
-### 2.1 宿主模型 ADR（待 Spike 决定）
+### 2.1 宿主模型 ADR（已决定，详见 spike-report.md §3）
+
+> **决定：v0.1 采用 Pi 直嵌 Main。** Spike 已验证单进程内的全部取消语义、dispose + 同 cwd 重建可重入、事件管道有序有界；跨进程方案仅在引入多窗口/多工作区并行或同步阻塞型工具时重新评估。
 
 | 方案 | 优点 | 代价 / 必须验证 |
 |---|---|---|
@@ -369,6 +371,7 @@ type PendingApproval = {
 
 - 使用 **pnpm** 与 `pnpm-workspace.yaml`；文档、CI 和本地命令不得混用 npm。
 - 锁定 React、Tailwind、Electron、pi、markstream-react 及 beUI 生成组件的精确兼容版本；不使用 `18+`、`≥2.0` 作为可执行安装要求。
+- **已锁定（Spike 实测）**：`@earendil-works/pi-coding-agent@0.84.2`、`@earendil-works/pi-ai@0.84.2`、`electron@43.4.1`、`electron-vite@5.0.0`、`typescript@~5.9.3`。React/Tailwind/markstream-react/beUI 在进入 Renderer 实施时锁定。
 - beUI registry URL/安装形式以其官方当前说明为准；将生成源码、版本和来源记录在仓库，不猜测 URL 后缀或包名。
 - Beautiful UI 仅作视觉参考，不引入运行时代码。
 
@@ -376,12 +379,16 @@ type PendingApproval = {
 
 选择 electron-vite、Electron Forge 或 electron-builder 之一，并记录：
 
+- **已定：electron-vite**（开发期构建 + 三端产物一体化）。完整发布管线（ASAR/签名/notarization/更新通道）在实施期补齐，见 spike-report.md §4。
+
 - Main/preload/Renderer 的打包边界，pi 及原生依赖的 external/files/ASAR 规则。
 - macOS、Windows、Linux 支持矩阵，代码签名和 notarization。
 - 自动更新不属于 v0.1；进入公开发布前必须确定更新通道、回滚和签名验证。
 - 版本升级与兼容性测试、崩溃报告、诊断日志和遥测的脱敏/用户同意策略。
 
-## 10. 冻结前 Spike 验收
+## 10. 冻结前 Spike 验收（已完成，结果见 docs/spike-report.md）
+
+> 全部探针可一键复现：`pnpm probe:all`。真实 LLM 端到端需设 `DEEPSEEK_API_KEY`（无 key 自动 SKIP）。
 
 1. `pi tool_call → PermissionManager → IPC → approval UI → allow/block` 全链路可用。
 2. allow/deny/ask、多 pending、abort、TTL、重复响应、切会话、切 cwd、窗口关闭、renderer 崩溃和 agent host 退出全部安全取消或拒绝。
@@ -409,8 +416,8 @@ Spike 通过并完成宿主模型 ADR 后，才能将本文状态改为“架构
 
 | 资源 | 地址 |
 |---|---|
-| Pi SDK 文档 | 上游仓库 `packages/coding-agent/docs/sdk.md` 的版本化 permalink（随锁定版本更新） |
-| Pi SDK 示例 | 上游仓库 `examples/sdk/13-session-runtime.ts` 与 `examples/extensions/permission-gate.ts` 的版本化 permalink |
+| Pi SDK 文档 | 上游仓库 [earendil-works/pi](https://github.com/earendil-works/pi) `packages/coding-agent/docs/sdk.md` 的版本化 permalink（锁定 v0.84.2） |
+| Pi SDK 示例 | 上游仓库 v0.84.2 下 `examples/sdk/13-session-runtime.ts` 与 `examples/extensions/permission-gate.ts` |
 | Electron 安全 | https://www.electronjs.org/docs/latest/tutorial/security |
 | Electron `BrowserWindow` | https://www.electronjs.org/docs/latest/api/browser-window |
 | beUI | https://beui.dev/components/agents |
