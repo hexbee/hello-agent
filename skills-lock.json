@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "skills": {
+    "design-taste-frontend": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/taste-skill/SKILL.md",
+      "computedHash": "6d838b246d0e35d0b53f4f23f98ba7a1dd561937e64f7d0c7553b0928e376c3e"
+    },
+    "markstream-install": {
+      "source": "Simon-He95/markstream-vue",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/markstream-install/SKILL.md",
+      "computedHash": "736cd28e3fdb210dad4b9fed7d22a103af7a8531d650a8cf3647d74b9f9fb13c"
+    },
+    "markstream-react": {
+      "source": "Simon-He95/markstream-vue",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/markstream-react/SKILL.md",
+      "computedHash": "da24f84741ea154e893b49569cf6196fb3d68534817bd835044451fdffe84778"
+    }
+  }
+}
