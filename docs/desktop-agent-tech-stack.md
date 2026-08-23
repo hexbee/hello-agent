@@ -1,223 +1,276 @@
-# 桌面 Agent 技术选型文档
+# 桌面 Agent 技术选型与实施边界
 
-> 状态：v0.3（架构冻结，进入实施）
-> 日期：2026-02
-> 目标：基于 pi SDK + Electron 构建本地 coding agent 桌面客户端
+> 状态：v0.3（核心方向已选；宿主模型、安全基线与 MVP 契约待 Spike 验证后冻结）
+>
+> 日期：2026-08-24
+>
+> 目标：基于 pi SDK 与 Electron 构建本地 coding agent 桌面客户端。
+
+本文是架构决策和 MVP 实施规格，不是完整 UI 规范。详细评审与未决问题见 [desktop-agent-tech-stack-review.md](./desktop-agent-tech-stack-review.md)。
 
 ---
 
-## 1. 总体架构
+## 1. 决策状态与 MVP 边界
+
+### 1.1 已确认的方向
+
+- Electron 作为桌面壳；React、Tailwind、beUI 和 markstream-react 作为 Renderer 候选实现。
+- UI 只依赖产品级 IPC 契约，不导入 pi 类型。
+- pi JSONL 是会话主存储；SQLite 只存审计、应用设置及未来索引等派生数据。
+- PermissionManager 是主进程安全边界，approval card 只是其 Renderer UI。
+- `AgentRuntime` 是产品接口，`PiAdapter` 是 v0.1 唯一实现；不在 MVP 引入独立 `AgentService` 层。
+
+### 1.2 冻结前未决项
+
+- Pi 直嵌主进程、`utilityProcess` 或 RPC 子进程的最终宿主模型。
+- 进程崩溃/卡死后的 runtime dispose、重建和会话恢复语义。
+- provider 鉴权、OAuth/API key 入门与凭据生命周期。
+- Trust matrix 的实际实现和项目资源加载策略。
+- v0.1 的构建/发布方案、精确依赖版本和平台支持。
+
+### 1.3 v0.1 范围
+
+| 包含 | 明确不包含 |
+|---|---|
+| 单工作区、会话列表/新建/打开/fork/重命名/可恢复删除 | 内置终端、文件树、Git 面板 |
+| 文本/推理/工具事件、流式 Markdown、文件 diff | MCP、附件、多工作区并行 |
+| provider 选择与认证、模型选择、停止、基础错误恢复 | 项目内 extensions/skills 自动加载 |
+| 工具审批、项目 Trust、审计日志 | 全文搜索、永久 shell 允许规则、自动更新 |
+
+任何新增能力必须先更新本表、产品事件契约和安全模型；不得仅在架构图中以“等”暗示已纳入 MVP。
+
+## 2. 总体架构与进程模型
 
 ```mermaid
 flowchart TB
-    subgraph Renderer["Electron 渲染进程"]
-        UI["React 应用组件层<br/>components/agent · session · workspace"]
-        DS["beUI 组件 + markstream-react 流式渲染"]
+    subgraph Renderer["Electron Renderer（不可信）"]
+        UI["React 产品组件<br/>agent · session · settings"]
+        DS["beUI 封装 + markstream-react"]
+        PRE["受限 preload API"]
         UI --> DS
+        UI --> PRE
     end
 
-    subgraph Main["Electron 主进程"]
-        IPC["Typed IPC Layer<br/>shared/ipc 契约"]
-        AS["AgentService"]
-        AR["AgentRuntime（产品级接口）"]
-        PA["PiAdapter（防腐层）"]
-        PI["pi SDK"]
-
+    subgraph Main["Electron Main（可信边界）"]
+        IPC["校验后的 IPC<br/>commands · events · snapshots"]
+        AR["AgentRuntime 产品接口"]
+        PA["PiAdapter（v0.1 实现）"]
         PM["PermissionManager<br/>policy · approval · trust · audit"]
-        SS["SessionService<br/>薄封装 pi JSONL 持久化"]
-        MS["ModelService / TerminalService 等"]
-
-        DB[("SQLite（仅索引与审计）<br/>主存储 = pi JSONL")]
+        SS["SessionService<br/>pi JSONL 薄封装"]
+        MS["Model/Auth Service"]
+        DB[("SQLite<br/>审计 · 设置 · 索引")]
     end
 
-    UI <-->|"Normalized Agent Event"| IPC
-    IPC --> AS --> AR --> PA --> PI
-    PM -.->|tool_call 门控| PI
-    AS --- SS --> DB
-    AS --- MS
+    subgraph Host["Agent host（待 Spike 决定）"]
+        PI["pi SDK（主进程直嵌）<br/>或 utilityProcess / RPC"]
+    end
+
+    PRE <-->|"validated command / product event"| IPC
+    IPC --> AR --> PA --> PI
+    PM -. "tool_call 门控" .-> PI
+    AR --- SS
+    AR --- MS
+    PM --> DB
 ```
 
-职责划分：
+职责：
 
-- **渲染进程**：纯展示层。只依赖产品级 `AgentEvent` 和 Typed IPC 契约，**不感知 pi 的存在**。
-- **AgentRuntime / PiAdapter**：防腐层。把 pi 事件归一化为产品事件（`text_delta` → `message.delta`），未来替换 RPC 模式或自研 Runtime 时 UI 层零改动。
-- **PermissionManager**：安全边界。所有工具调用经它门控（allow / deny / ask），approval-card 只是它的 UI。
-- **SessionService**：薄封装 pi 的 JSONL 会话持久化，不重复造存储。
+- **Renderer**：展示产品状态；不持有文件系统、Node、pi 或凭据能力。
+- **preload / IPC**：只暴露白名单操作；主进程验证 sender、输入和授权。
+- **AgentRuntime / PiAdapter**：归一化 pi 状态和事件，隔离 Renderer 与底层 transport。
+- **PermissionManager**：拦截工具调用、等待审批、保存最小审计记录。
+- **SessionService**：调用 pi 的会话 API；不重写 session runtime。
 
-## 2. 分层选型
+### 2.1 宿主模型 ADR（待 Spike 决定）
 
-| 层 | 选型 | 理由 |
+| 方案 | 优点 | 代价 / 必须验证 |
 |---|---|---|
-| Agent 内核 | `@earendil-works/pi-coding-agent` SDK（主进程直嵌） | 官方支持桌面嵌入场景；事件流完整；会话树 / fork / compaction / 多 provider 开箱即用 |
-| Agent 内核备选 | RPC 子进程模式（`pi --mode rpc`） | 经 PiAdapter 切换，UI 零改动；协议要求严格按 `\n` 分帧 |
-| 桌面壳 | Electron | 已定 |
-| UI 框架 | React 18+ / Tailwind v4 | beUI 与 markstream-react 的共同 peer 要求 |
-| 组件库 | beUI（shadcn registry 拉取源码）+ 自有应用组件层 | beUI 是实现手段不是架构边界；产品组件（`components/agent/AgentMessage` 等）包装 beUI，保证可替换 |
-| Markdown 流渲染 | markstream-react ≥2.0 | 内置 smooth streaming、`htmlPolicy="safe"` 安全默认、Mermaid/KaTeX 可选 peer |
-| 图标 | lucide-react（随 beUI 组件引入） | beUI 源码全部使用 lucide，保留即全项目单一图标族；Phosphor 为可选后续迁移项（见第 6 节） |
-| 动画 | Motion (`motion/react`) | beUI 已依赖，不额外引入 GSAP |
-| 本地存储 | pi JSONL（主存储）+ SQLite（仅索引/审计，按需） | 见第 5 节 Session 持久化 |
+| Pi 直嵌 Main | 类型直接、实现最短 | 同步阻塞、OOM、原生崩溃与 Main 同一故障域；必须能捕获普通异常、dispose 并重建 runtime |
+| `utilityProcess` / RPC | 将 Agent 的阻塞/崩溃与窗口隔离 | 生命周期、日志、认证、cwd、会话恢复和 pending approval 都须跨进程重做；不等同于“零改动切换” |
 
-### 2.1 为什么是 pi SDK 而不是 RPC
+PiAdapter 的目标仅是保持 **Renderer 产品契约** 稳定。若切换 transport，主进程生命周期、取消和权限 Promise 仍须按新进程模型重新设计。
 
-- 同进程类型安全，直接访问 session 状态（`session.messages`、`session.agent.state`）
-- 官方文档明确将 "Build a custom UI (web, desktop, mobile)" 列为 SDK 用例
-- RPC 仅在需要进程隔离时通过 PiAdapter 作为后备方案
+冻结条件：完成第 10 节的 Spike 后，按卡死恢复、事件可靠性、打包复杂度和权限取消语义选择其一，并写入单独 ADR。
 
-### 2.2 为什么是 beUI 而不是 Beautiful UI
+## 3. Electron 安全基线
 
-- beUI 是真正的组件库：shadcn registry 安装、完整 TS 类型、`useReducedMotion` 支持
-- `prompt-input` 的 props（`models`/`onModelChange`/`loading`/`onStop`/`onSubmit`）几乎一一对应 pi SDK 能力
-- 自带 `message-scroller`（跟随流式 live edge、用户上滚释放控制），自研成本高
-- Beautiful UI（beautifului.dev）降级为长尾模式的视觉参考（表格类、Flowchart、Insight Cards 等 beUI 未覆盖的模式）
+所有 BrowserWindow 必须采用以下默认值：
 
-## 3. 核心数据流映射
-
-Pi 事件经 **PiAdapter 归一化**后进入 IPC，渲染进程只消费产品事件：
-
-```mermaid
-flowchart LR
-    A["pi 事件<br/>text_delta"] --> B["PiAdapter<br/>归一化 + 补全 sessionId/messageId"]
-    B --> C["AgentEvent 产品事件<br/>message.delta"]
-    C --> D["Typed IPC"]
-    D --> E["React stores"]
+```ts
+new BrowserWindow({
+  webPreferences: {
+    preload: preloadPath,
+    contextIsolation: true,
+    sandbox: true,
+    nodeIntegration: false,
+  },
+});
 ```
 
-| pi SDK 事件/API | PiAdapter 归一化 | 产品事件 / Channel | UI 承接 |
+此外：
+
+1. preload 通过 `contextBridge` 暴露每个具体命令和事件订阅包装器；不得暴露 `ipcRenderer`、事件对象或泛型 `invoke/send`。
+2. 每个 `ipcMain.handle/on` 都校验 sender frame、窗口身份、输入 schema、当前 cwd/会话所有权及 Trust/权限；类型声明不是运行时安全校验。
+3. 配置严格 CSP；拒绝非预期导航、`window.open` 与 webview；外链只经受控 allowlist 交给系统浏览器。
+4. Renderer 不得读取环境变量、`~/.pi/agent/auth.json`、钥匙串、文件系统或原始 API key。主进程不得通过 IPC 返回凭据。
+5. API key/OAuth credential 仅由 Main 管理，保存在系统安全存储；审计、错误报告和日志一律脱敏。
+
+Electron 的官方安全文档要求隔离 context、关闭 Node integration、启用 sandbox，并在 IPC handler 校验 sender；这些是上线前硬性条件。
+
+## 4. 工作区、Trust 与 runtime 生命周期
+
+### 4.1 打开工作区状态机
+
+```mermaid
+stateDiagram-v2
+    [*] --> SelectFolder
+    SelectFolder --> CanonicalizeCwd: 用户选择目录
+    CanonicalizeCwd --> TrustCheck: realpath / 边界校验通过
+    CanonicalizeCwd --> Failed: 不可访问或路径无效
+    TrustCheck --> ConfigureAuth: 已有 Trust 记录
+    TrustCheck --> RequestTrust: 无记录或记录失效
+    RequestTrust --> ConfigureAuth: 用户确认级别
+    ConfigureAuth --> CreateRuntime: provider 可用
+    ConfigureAuth --> NeedsAuth: 无凭据/认证失败
+    NeedsAuth --> ConfigureAuth: 认证完成
+    CreateRuntime --> RestoreSession: runtime 已绑定 extensions
+    RestoreSession --> Ready
+    Ready --> [*]: 关闭 / 切换 cwd / 故障恢复
+```
+
+`cwd` 必须在主进程 canonicalize（`realpath`）后才可被使用。工作区路径边界一律基于 canonical path 判定，处理 symlink、挂载盘和不存在路径；切换 cwd 时取消旧会话的审批、dispose runtime，再开始新流程。
+
+### 4.2 v0.1 Trust matrix
+
+信任记录保存于应用设置（key = canonical workspace path），路径不可解析、工作区被移除或用户手动撤销时失效。
+
+| 能力 | Untrusted | Restricted | Trusted |
 |---|---|---|---|
-| `text_delta` | 补 sessionId/messageId | `message.delta` | markstream-react：流式中 `smoothStreaming="auto"` + `fade={false}`；历史回放切 `smoothStreaming={false}` + `fade={true}` |
-| `thinking_delta` | 同上 | `thinking.delta` | beUI `agent-activity` 推理链折叠面板 |
-| `tool_execution_start/end` | 统一 toolCallId 载荷 | `tool.started` / `tool.finished` | beUI `tool-result` chips |
-| edit 工具 `details.patch` | 并入 tool.finished 载荷 | `tool.finished{ patch }` | beUI `file-diff` 渲染文件变更 |
-| 扩展拦截 `tool_call` | 转 approval 请求 | `approval.requested` / `approval.resolved` | beUI `approval-card` / `tool-approval` |
-| `isStreaming` / `abort()` | — | `agent.state` / `agent.abort` 命令 | beUI `prompt-input` 的 `loading` / `onStop` |
-| `ModelRuntime.getAvailable()` | ModelInfo[] | `models.list` | beUI `prompt-input` 的 `models` / `onModelChange` |
-| `SessionManager.list/open` | SessionMeta[] | `session.list` / `session.open` | 会话侧边栏 |
-| `agent_start` / `agent_end` | 补结束原因（completed / aborted / failed） | `agent.started` / `agent.completed` / `agent.aborted` | 驱动 UI loading / 完成态 / 停止态 |
-| `state.errorMessage` + `auto_retry_*` | 细分错误类型（llm / tool / permission / network / runtime） | `agent.failed{ kind }` | 错误提示、重试按钮；重试中状态接 `auto_retry_*` 事件 |
-| `compaction_start/end` | — | `context.compaction` | 上下文压缩进度提示（不自建 ContextManager，仅展示） |
+| 创建 Agent runtime | 否 | 是 | 是 |
+| 内置只读工具（限工作区） | 否 | 是 | 是 |
+| 写文件 / edit | 否 | 否 | 需 PermissionManager ask |
+| bash / 网络工具 | 否 | 否 | 需 PermissionManager ask |
+| 工作区外路径 / 凭据 | 否 | 否 | 否（v0.1） |
+| 项目 extensions / skills / 自定义配置 | 否 | 否 | 否（v0.1） |
+| MCP | 否 | 否 | 否（v0.1） |
 
-### 3.1 Typed IPC 契约
+Trusted 不等于无限信任。项目资源自动加载在 v0.1 一律关闭，后续作为独立安全设计；这避免项目内容或 prompt injection 直接获得宿主代码执行能力。
 
-```text
-packages/shared/src/ipc/
-├── events.ts      # AgentEvent 联合类型（单一事实来源）
-├── commands.ts    # 渲染进程 → 主进程命令签名
-└── schemas.ts     # zod / typebox schema 校验（可选）
-```
+### 4.3 故障与恢复
 
-原则：
+- 普通 Agent 异常：保留窗口，进入 failed 状态，停止输入，记录脱敏诊断，尝试 `dispose()` 旧 runtime 并显式提供“重建 runtime”。
+- Main 无响应、OOM 或原生崩溃：属于直嵌方案的风险，Spike 必须量化；若不满足恢复目标，改用隔离 host。
+- 重建 runtime：重新检查 cwd/Trust/auth，重新绑定 extensions 和订阅，再恢复最新可用 JSONL 会话；失败时保持可重试错误态。
+- 应用退出、窗口关闭和 cwd/session replacement：先 abort、取消审批、退订、dispose，再释放持久化/子进程资源；每一步均有超时兜底。
 
-- Main 与 Renderer 只 import `shared` 包的类型，禁止在 UI 层出现 pi 类型
-- Channel 字符串由常量枚举生成，不手写字符串
+## 5. AgentRuntime 与会话
 
-### 3.2 主进程骨架（示意）
+### 5.1 最小产品接口
 
-```typescript
-// packages/agent-core/src/pi-adapter.ts
-import { createAgentSession, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+`AgentRuntime` 只暴露 v0.1 产品需要的能力，禁止变成 pi API 的逐项转发：
 
-export class PiAdapter implements AgentRuntime {
-  private session!: AgentSession;
-  private unsubscribe: (() => void) | undefined;
+| 类别 | 最小方法 / 状态 |
+|---|---|
+| 生命周期 | `create(cwd)`、`dispose()`、`snapshot()`、`subscribe()` |
+| 运行 | `prompt(input)`、`abort()` |
+| 会话 | `list()`、`open(sessionPath)`、`new()`、`fork(entryId)`、`rename(name)`、`delete(sessionPath)` |
+| 模型 | `listModels()`、`selectModel(ref)`、`authState()` |
+| 事件 | 只发送第 6 节 `AgentEvent`；不泄露 pi 类型 |
 
-  async start(cwd: string) {
-    // 正式产品用持久化会话，不用 inMemory
-    const modelRuntime = await ModelRuntime.create();
-    const { session } = await createAgentSession({
-      sessionManager: SessionManager.create(cwd),
-      modelRuntime,
-    });
-    this.attach(session);
-  }
+`steer`、`followUp`、MCP、附件和多 Agent 协作不在 v0.1；收到相关 pi 事件时只记录/回放，不暴露交互入口。
 
-  /** 会话替换（switch/new/fork）后必须重绑：事件订阅挂在具体 AgentSession 上 */
-  private attach(session: AgentSession) {
-    this.unsubscribe?.();
-    this.session = session;
-    this.unsubscribe = session.subscribe((event) => {
-      // pi 事件 → 产品事件归一化
-      if (event.type === "message_update") {
-        const e = event.assistantMessageEvent;
-        if (e.type === "text_delta") this.emit({ type: "message.delta", delta: e.delta });
-        if (e.type === "thinking_delta") this.emit({ type: "thinking.delta", delta: e.delta });
-      }
-      if (event.type === "tool_execution_start") {
-        this.emit({ type: "tool.started", toolName: event.toolName, toolCallId: event.toolCallId });
-      }
-      // ...
-    });
-  }
+### 5.2 Pi session replacement 与扩展绑定
 
-  prompt(input: PromptInput) { return this.session.prompt(input.text); }
-  abort() { return this.session.abort(); }
+pi 的 `newSession`、`switchSession`、`fork` 会替换 live session；实现必须使用 `AgentSessionRuntime` 管理替换，而不是只在初始阶段调用 `createAgentSession()`。
 
-  /** 由 SessionService 在 switchSession/newSession/fork 后调用 */
-  rebind(runtime: AgentSessionRuntime) {
-    this.attach(runtime.session);
-    // 扩展也挂在具体 session 上：PermissionManager 等扩展必须重绑，否则门控静默失效
-    runtime.session.bindExtensions();
-  }
+绑定是异步原子流程：先取消旧订阅，拿到 `runtime.session`，`await session.bindExtensions(actualBindings)`，再订阅事件。`actualBindings` 必须包含 PermissionManager 所需的扩展绑定；不能使用无参 `bindExtensions()` 伪代码。
+
+```ts
+private async bindCurrentSession() {
+  this.unsubscribe?.();
+  const session = this.runtime.session;
+  await session.bindExtensions(this.extensionBindings);
+  this.unsubscribe = session.subscribe((event) => this.emitNormalized(event));
+}
+
+async switchSession(path: string) {
+  await this.runtime.switchSession(path);
+  await this.bindCurrentSession();
 }
 ```
 
-**事件重绑定纪律（真实缺口，勿省略）**：pi 的订阅和扩展都挂在具体 `AgentSession` 实例上，`switchSession()/newSession()/fork()` 会替换实例。PiAdapter 必须封装 attach/rebind（subscribe 返回 unsubscribe，替换后先退订再重挂），扩展侧调用 `runtime.session.bindExtensions()`。已纳入 Spike 验收清单。
+### 5.3 Session 持久化
 
-### 3.3 渲染进程骨架（示意）
+- JSONL 是唯一会话主存储。`SessionManager` 负责 list/open/continue；runtime 负责 new/switch/fork。
+- rename 使用 pi API，不直接修改 JSONL。
+- delete 仅接收 SessionManager 返回的已验证会话路径；优先移入回收站。若必须永久删除，需二次确认并拒绝 symlink/工作区外路径。
+- SQLite 只保存审计、设置和未来索引；不进入 Agent/Session 执行主路径，也不与 JSONL 双写为主数据。
+- 定义 JSONL/SQLite 的版本、迁移、备份、恢复、保留期和损坏处理。审计库可在首次审计写入时 lazy 初始化，但它是 v0.1 权限闭环的一部分。
 
-```tsx
-function AgentMessage({ isStreaming }: { isStreaming: boolean }) {
-  const [content, setContent] = useState("");
+## 6. 产品事件与 IPC
 
-  useEffect(() => {
-    // 只消费产品事件，不感知 pi
-    const off = window.agent.on("message.delta", (e) => setContent((c) => c + e.delta));
-    return off;
-  }, []);
+### 6.1 事件契约
 
-  return (
-    <Markstream
-      content={content}
-      smoothStreaming={isStreaming ? "auto" : false}
-      fade={!isStreaming}
-      typewriter={isStreaming}
-    />
-  );
-}
+所有 Main → Renderer 事件都有 `version`、`sequence`、`sessionId` 和 `timestamp`；消息事件另有 `messageId`，工具事件另有 `toolCallId`。Renderer 按 sequence 检测缺口，并通过 `agent.snapshot` 恢复。
+
+```ts
+type EventBase = {
+  version: 1;
+  sequence: number;
+  sessionId: string;
+  timestamp: number;
+};
+
+type AgentEvent =
+  | (EventBase & { type: "message.started"; messageId: string; role: "assistant" })
+  | (EventBase & { type: "message.delta"; messageId: string; delta: string })
+  | (EventBase & { type: "message.finished"; messageId: string })
+  | (EventBase & { type: "thinking.delta"; messageId: string; delta: string })
+  | (EventBase & { type: "tool.started"; toolCallId: string; toolName: string; input: unknown })
+  | (EventBase & { type: "tool.updated"; toolCallId: string; partialResult: unknown })
+  | (EventBase & { type: "tool.finished"; toolCallId: string; isError: boolean; result: unknown; patch?: unknown })
+  | (EventBase & { type: "agent.state"; state: "running" | "idle" | "aborted" | "failed" })
+  | (EventBase & { type: "agent.failed"; kind: "llm" | "tool" | "permission" | "network" | "runtime"; message: string })
+  | (EventBase & { type: "context.compaction"; phase: "started" | "finished" })
+  | (EventBase & { type: "approval.requested"; requestId: string; toolCallId: string; toolName: string; input: unknown })
+  | (EventBase & { type: "approval.resolved"; requestId: string; decision: "allow" | "deny" | "cancelled" | "expired" });
 ```
 
-注意事项：
+pi 映射要求：
 
-- 单条 message 做成独立 memo 组件，delta 只触发自身重渲染，消息列表其余部分不动
-- `await session.prompt()` 会等整轮结束，流式 UI 完全靠 subscribe 事件驱动
-- 工具调用从文本流中拆出单独渲染，markdown 只渲染纯文本部分
+| pi 事件/API | 产品事件 / 行为 |
+|---|---|
+| `message_start/update/end` | `message.started`、delta/thinking、`message.finished`；`messageId` 由 PiAdapter 合成（见下方注记） |
+| `tool_execution_start/update/end` | `tool.started/updated/finished`，保留 `toolCallId` |
+| `agent_start/end`、`turn_start/end` | `agent.state`，并更新 snapshot；v0.1 不展示 turn UI |
+| `queue_update`、`steer`、`followUp` | snapshot 记录；v0.1 不提供控制 UI |
+| `auto_retry_*`、错误状态 | `agent.state` / `agent.failed`，带安全的错误分类 |
+| `compaction_start/end` | `context.compaction` |
+| `ModelRuntime.getAvailable()` | `models.list` 命令结果；无可用模型时进入 auth state |
 
-## 4. 权限与项目信任（一级模块）
+**`messageId` 规则**：pi 的 `UserMessage` / `AssistantMessage` 没有原生 `id`，不可从 message 提取。PiAdapter 在 `message_start` 以当前 session 的 active branch 消息序号合成不透明且确定性的 ID，例如 `${sessionId}:m:${activeBranchOrdinal}`；历史回放按同一分支的 message entry 顺序重建同一序号。pi JSONL 的 session entry 有独立 `id`，可供 Adapter 在持久化后做内部对齐和诊断，但不是产品事件的 messageId。
 
-> Approval Card 是 UI；PermissionManager 才是安全边界。
+### 6.2 IPC 规则、背压与恢复
 
-pi 无内置权限弹窗，但官方提供 `tool_call` 拦截点（见 `examples/extensions/permission-gate.ts`）：扩展中 `pi.on("tool_call")` 返回 `{ block: true }` 即可阻止执行。我们的实现方式：
+- `packages/shared/src/ipc/events.ts`、`commands.ts`、`schemas.ts` 是单一事实来源。**这取代此前“v0.1 暂不引入 runtime schema”的决定**：所有 Renderer → Main command 使用随 `shared` 包交付的运行时校验器（轻量手写 validator 或 TypeBox），不得只依赖 TypeScript 类型；approval response 还须校验 request 所属会话、sender 和当前 pending 状态。
+- Main 保存可重建的当前 snapshot。Renderer 重载、崩溃重启或发现 sequence gap 时调用 `agent.snapshot`，不得假设 delta 不会丢失。
+- delta 通过有上限的合批队列发送（按短时间窗口或最大字节数 flush），并保留顺序号；不能为每个 delta 无限制发 IPC。
+- Spike 目标：1,000+ delta 的长流中 Renderer 不冻结、内存不持续增长、事件不失序，记录 batch 窗口、大小和延迟结果。
 
-```mermaid
-flowchart TB
-    TR["Tool Request<br/>bash / write / edit ..."] --> PERM{"PermissionManager"}
-    PERM -->|allow| RUN["放行执行"]
-    PERM -->|deny| BLOCK["返回 block:true"]
-    PERM -->|ask| UI["IPC → 渲染进程 approval-card"]
-    UI -->|allow once / always / deny| PERM
-    PERM --> AUDIT[("audit log<br/>SQLite 审计表")]
-```
+## 7. 权限、审批与审计
 
-- **PermissionManager** 以 pi extension 形态接入（拦截 `tool_call`），决策结果经 IPC 异步等待渲染进程的 approval-card 回答
-- 决策粒度带 scope：本次允许 / 当前会话允许 / 当前工作区允许 / 永久允许（记录到 tool + command + scope 粒度，如 "allow: bash `git status` @ workspace"，不做粗粒度的"永久允许整个工具"）/ 拒绝。v0.1 只存 scope 字段，不建 rule engine
-- 高危模式（`rm -rf`、`sudo`、`git reset --hard`、`npm publish` 等）默认进 ask 名单
-- **Project Trust**：首次打开项目目录弹出信任确认（Untrusted / Trusted / Restricted），落盘到信任存储，并与权限名单联动
+### 7.1 决策原则
 
-### 4.1 PendingApproval 状态机
+pi `tool_call` 扩展是门控点。PermissionManager 在 Main 中以 extension 绑定，任何工具调用必须产生 `allow`、`deny` 或 `ask` 决策。
 
-`ask` 路径是跨进程异步流程（pi tool_call → 主进程挂起 → IPC → 渲染进程 → 用户决策 → IPC 回写），必须显式管理未决状态：
+- v0.1 scope：**本次**、**当前会话**、**当前工作区**、**拒绝**。
+- 不支持永久 shell 规则；命令字符串不可作为安全可靠的长期匹配键。
+- `rm -rf`、`sudo`、`git reset --hard`、`npm publish` 等高危操作始终 ask，不受会话/工作区允许规则放宽。
+- allow 规则至少绑定 Trust 级别、tool、canonical workspace 和结构化输入摘要；所有决策可撤销且审计脱敏。
 
-```typescript
+### 7.2 PendingApproval 生命周期
+
+```ts
 type PendingApproval = {
   requestId: string;
   sessionId: string;
@@ -229,168 +282,76 @@ type PendingApproval = {
 };
 ```
 
-主进程维护 ApprovalRegistry（PendingApprovalStore），扩展的 `tool_call` handler 返回一个 Promise，由 registry 在收到渲染进程响应时 resolve。
-
-**必须处理的生命周期**（否则 Promise 泄漏 / UI 悬挂）：
-
-| 场景 | 处理 |
+| 场景 | 必须行为 |
 |---|---|
-| 多个工具同时等待审批 | requestId 一一对应，各自独立 resolve |
-| 用户 abort（Escape / 停止按钮） | 取消该会话所有 pending → status=cancelled，pi 侧 handler 以 block 返回 |
-| 切换/新建会话 | 取消旧会话 pending |
-| 窗口关闭 / renderer 崩溃 | 主进程超时兜底，全部置 cancelled |
-| 审批超时 | 可配置 TTL，过期置 expired 并拒绝执行 |
-| 重复响应（同 requestId 二次回写） | 幂等：仅首次生效 |
+| 多个工具等待 | requestId 一一对应，独立 resolve |
+| abort | 取消该会话全部 pending，并向 pi 返回 block |
+| switch/new/fork/cwd 切换 | 取消旧会话 pending，再替换 runtime |
+| renderer 崩溃、窗口关闭、agent host 退出 | 立即取消全部相关 pending；TTL 仅作额外兜底 |
+| 超时 | 标记 expired，拒绝执行 |
+| 重复或伪造响应 | 只接受首次、当前 sender 的合法响应；其余拒绝并审计 |
 
-安全相关逻辑（本节全部行为）作为独立测试重点，不等 UI 完成后补测：allow / deny / ask / abort / timeout / window close / session switch / renderer crash / duplicate response。
+审计写入采用内存队列和异步落盘，失败只记录 warning，不能阻塞工具 handler；但审计 schema、迁移和保留策略必须在 v0.1 定义。
 
-## 5. Session 持久化
+## 8. 鉴权与模型
 
-**主存储直接使用 pi 的 JSONL 会话文件**，不自建第二份存储：
+首次启动和切换 provider 时，Main 负责：
 
-- pi 会话原生持久化（树结构，支持 branch/fork/resume/import）
-- `SessionManager.create(cwd)` / `continueRecent(cwd)` / `list()` / `listAll()` / `open()` 全部现成
-- `runtime.newSession() / switchSession() / fork()` 负责会话替换
+1. 列出 provider 与认证方式，接收经 schema 验证的 API key/OAuth 发起请求。
+2. 使用 pi 的认证/模型能力检查凭据，读取可用模型；Renderer 只得到脱敏 auth state 和 `ModelInfo[]`。
+3. 将凭据写入系统安全存储；取消、失败、过期或 provider 不可用均返回可重试错误态。
+4. 正在运行时禁止切换模型/凭据，或明确先 abort 后切换；不得留下半配置 runtime。
 
-```text
-SessionService（薄封装，非重写；原则：pi 有的用 pi API，没有的才加最薄适配）
-├── list()          → SessionManager.listAll + 元数据整理
-├── open(id)        → runtime.switchSession
-├── fork(entryId)   → runtime.fork
-├── rename(name)    → pi.setSessionName()（原生 API，勿直接改 JSONL）
-├── delete(id)      → 移除 .jsonl 文件；优先 trash CLI（与 pi /resume 行为一致，可恢复）
-└── search()        → P2 产品功能，届时再定 SQLite 全文索引 schema
-```
+必须覆盖：首次无凭据、OAuth 取消、API key 错误、provider 网络错误、凭据过期和没有可用模型。
 
-原则：避免 SessionService 膨胀成第二套 Session Runtime；AgentRuntime 接口同理——只暴露产品真实需要的能力，不做 pi API 全量 wrapper。
+## 9. 依赖、构建与发布
 
-**SQLite 定位（按需引入，不做主存储）**：仅存索引与派生数据——跨会话全文搜索、权限审计日志、应用设置。避免与 JSONL 形成双数据源同步问题。
+### 9.1 依赖纪律
 
-## 6. 安装清单
+- 使用 **pnpm** 与 `pnpm-workspace.yaml`；文档、CI 和本地命令不得混用 npm。
+- 锁定 React、Tailwind、Electron、pi、markstream-react 及 beUI 生成组件的精确兼容版本；不使用 `18+`、`≥2.0` 作为可执行安装要求。
+- beUI registry URL/安装形式以其官方当前说明为准；将生成源码、版本和来源记录在仓库，不猜测 URL 后缀或包名。
+- Beautiful UI 仅作视觉参考，不引入运行时代码。
 
-### 6.1 主进程 / agent-core
+### 9.2 构建发布决策（开工前完成）
 
-```bash
-npm i @earendil-works/pi-coding-agent
-```
+选择 electron-vite、Electron Forge 或 electron-builder 之一，并记录：
 
-打包时确保 pi 位于 main 的 dependencies（electron-builder 的 `files` 配置），不要被 tree-shake。
+- Main/preload/Renderer 的打包边界，pi 及原生依赖的 external/files/ASAR 规则。
+- macOS、Windows、Linux 支持矩阵，代码签名和 notarization。
+- 自动更新不属于 v0.1；进入公开发布前必须确定更新通道、回滚和签名验证。
+- 版本升级与兼容性测试、崩溃报告、诊断日志和遥测的脱敏/用户同意策略。
 
-### 6.2 渲染进程（最小 peer 集）
+## 10. 冻结前 Spike 验收
 
-```bash
-npm i react react-dom tailwindcss motion
-npm i markstream-react stream-diffs mermaid katex
+1. `pi tool_call → PermissionManager → IPC → approval UI → allow/block` 全链路可用。
+2. allow/deny/ask、多 pending、abort、TTL、重复响应、切会话、切 cwd、窗口关闭、renderer 崩溃和 agent host 退出全部安全取消或拒绝。
+3. `newSession`、`switchSession`、`fork` 后执行 `await bindExtensions(actualBindings)`；delta、工具事件和权限拦截仍生效。
+4. Agent 普通异常后窗口仍可用，runtime 可 dispose 并在同一 cwd 重建；记录失败和恢复状态。
+5. 1,000+ delta 压测中 IPC 合批有序、Renderer 不冻结、无无界积压。
+6. Renderer 只能访问 preload 白名单，不拥有 Node、文件系统、pi auth 文件、API key 或通用 IPC。
+7. Untrusted/Restricted/Trusted 各项 Trust matrix 都有自动化测试；项目 extensions/skills 在 v0.1 不会被自动执行。
+8. 包含 pi 依赖的打包产物可启动，并在目标平台验证最小会话、认证和权限链路。
 
-# beUI 组件（shadcn registry）
-npx shadcn add https://beui.dev/r/prompt-input \
-                https://beui.dev/r/agent-activity \
-                https://beui.dev/r/tool-result \
-                https://beui.dev/r/file-diff \
-                https://beui.dev/r/approval-card \
-                https://beui.dev/r/message-scroller
-```
+Spike 通过并完成宿主模型 ADR 后，才能将本文状态改为“架构冻结，进入实施”。
 
-跳过的可选 peer（最小安装原则）：`@terrastruct/d2`、`@antv/infographic`。
+## 附录 A：Renderer 与设计实现约束
 
-### 6.3 CSS 引入顺序（渲染进程入口）
+这些内容不阻塞架构冻结，进入 Renderer 实现时再细化：
 
-```tsx
-import './reset.css'                          // reset 在前
-import 'markstream-react/index.css'           // Tailwind 项目用 layer(components)
-import 'katex/dist/katex.min.css'             // 启用公式时必须显式引入
-```
+- markstream-react 保持安全 HTML policy；Mermaid 采用严格配置，Agent 输出视为不可信。
+- 每条消息独立 memo，历史回放关闭 smooth streaming；工具调用与 markdown 文本分离渲染。
+- 支持 loading、empty、error 三态和 reduced motion。
+- 视觉系统、图标 stroke、Phosphor 迁移、CSS layer、D2/信息图及“反 AI 味”规则归入 UI 规范，不作为架构决策。
+- 性能指标以冷启动、首 token 延迟、IPC 吞吐、长会话内存和恢复时间为主，而非仅使用网页 LCP。
 
-Tailwind 项目中 markstream 样式写法：
-
-```css
-@import 'markstream-react/index.css' layer(components);
-```
-
-### 6.4 功能开关
-
-| 功能 | 支持 | 说明 |
-|---|---|---|
-| Mermaid 图表 | ✅ 装 `mermaid >= 11` 即自动启用 | ` ```mermaid ` 围栏渲染为图表 |
-| KaTeX 公式 | ✅ 装 `katex >= 0.16.22` + 引入其 CSS | 行内/块级 LaTeX |
-| 增强代码块 / Diff | ✅ `stream-diffs` | 不装则降级普通 `<pre><code>` |
-| D2 / 信息图 | ⏸ 暂不装 | agent 输出极少出现，需要再加 |
-
-## 7. 工程结构与关键约束
-
-### 7.1 v0.1 目录结构（最小 monorepo）
-
-```text
-desktop-agent/
-├── apps/
-│   └── desktop/
-│       ├── electron/
-│       │   ├── main.ts            # 生命周期 / 窗口 / IPC 注册
-│       │   ├── ipc/               # 按 agent/session/settings 分文件注册
-│       │   └── services/
-│       └── renderer/
-│           ├── components/
-│           │   ├── agent/         # AgentMessage / AgentThinking / AgentApproval ...
-│           │   ├── session/       # 包装 beUI，隔离组件库 API
-│           │   └── settings/
-│           ├── stores/
-│           └── hooks/
-├── packages/
-│   ├── shared/                    # IPC 契约 + 产品事件类型（Main/Renderer 共用）
-│   └── agent-core/                # PiAdapter + AgentService + PermissionManager
-├── package.json
-├── pnpm-workspace.yaml
-└── tsconfig.json
-```
-
-先只拆 `shared` + `agent-core` 两包，llm/tools/mcp/context 等先用目录边界，出现真实复用需求再提取为独立包。
-
-### 7.2 关键约束
-
-1. **安全默认不放宽**：markstream 保持 `htmlPolicy="safe"` 和 Mermaid strict mode（agent 输出不可信）；权限决策集中在 PermissionManager，UI 不承担决策逻辑。
-2. **pi 只跑在主进程**：依赖 Node API（fs、child_process），不能进渲染进程。
-3. **耦合纪律**：UI 不 import pi 类型；beUI 不直接出现在页面组件里（经 components/agent 包装）；SQLite 不被 React 或 pi 直接读写。
-4. **Context 管理**：不自建 ContextManager，订阅 pi 内置 compaction 事件（`compaction_start/end`）做 UI 展示即可。
-5. **MVP 范围**：6 个 beUI 组件起步（见安装清单）；Beautiful UI 仅作参考不引入代码。
-6. **设计纪律**：
-   - 单一 accent 色、统一圆角系统、暗色优先双模式（WCAG AA）
-   - 反 AI 味清单执行（无装饰性状态点滥用、无 em-dash、无假精确数字、无 div 拼假截图）
-   - 三态完整：loading（骨架屏）/ empty / error
-7. **性能**：animate 只用 transform/opacity；`prefers-reduced-motion` 全链路尊重（beUI 内置）；LCP < 2.5s。
-8. **图标策略**：MVP 阶段保留 lucide-react（随 beUI 引入），全项目单一图标族，不混用；全局 `strokeWidth` 统一为 2。若产品成型后需要品牌差异化，再做一次性 Phosphor 迁移（届时组件数量固定，用 codemod 批量改 import，Phosphor regular weight 对齐 lucide strokeWidth 2）
-
-### 7.3 实施纪律（v0.3 评审后确定）
-
-**首个任务：Permission Gate Spike**。真实验证 `pi tool_call → PermissionManager → IPC → Approval UI → resolve/block` 异步链路，按 §4.1 生命周期表逐场景验收（多 pending、abort、session 切换、窗口关闭）。这是方案中唯一的新发明，其余均为组装现成能力，Spike 通过 = 最大技术风险消除。
-
-Spike 验收附加项：
-- **事件重绑定**：switch/new/fork 会话后 delta/tool/权限拦截仍正常工作（见 §3.2 重绑定纪律）
-- **toolCallId 断言**：SDK 层 `tool_execution_start/end` 事件的 `toolCallId` 已经类型定义确认存在（`pi-agent-core` AgentEvent），Spike 中加一行运行时断言即可
-- **实现提醒**：自建 PermissionManager 扩展持有自己的 Promise registry，不复用官方 permission-gate.ts 的 `ctx.ui` helper（其 `ctx.hasUI === false` 直接 block 的分支不适用于我们）
-
-**Session delete 已核实落定**（经 pi 官方文档确认）：
-- pi 无 SDK 删除 API，官方 `/resume` 界面的删除即移除 `.jsonl` 文件，且优先用 trash CLI（可恢复）
-- 我们的 delete 采用同一约定：trash CLI 优先，fallback 直接删除；删除后 `SessionManager.list()` 天然正常
-- rename 走原生 `pi.setSessionName()`，不碰文件
-
-**SQLite sidecar 纪律**：
-- JSONL 始终是主存储；SQLite 仅审计/索引等派生数据，绝不进入 Agent/Session 核心执行路径
-- 审计写入 fire-and-forget：内存队列 + 异步落盘，写失败仅记 warning，绝不阻塞 `tool_call` handler 返回
-- 连接 lazy 初始化：首次审计写入时才建库建表，Agent 启动路径不碰 SQLite
-
-**IPC 契约暂不引入 runtime schema**：
-- v0.1 以 TypeScript 编译期类型作为 Main↔Renderer 契约，zod/typebox 保持可选
-- 引入时机：出现外部不可信输入、插件体系或复杂持久化恢复需求
-- 保留项（与 schema 无关的防线）：PermissionManager 对回写的 approval response 做手写防御校验（requestId 存在性 + status 合法值），权限决策入口不信任任何来路消息
-
-## 8. 参考资源
+## 附录 B：参考资源
 
 | 资源 | 地址 |
 |---|---|
-| pi SDK 文档 | 本地 `~/.bun/install/global/node_modules/@earendil-works/pi-coding-agent/docs/sdk.md` |
-| pi SDK 示例 | `examples/sdk/01-minimal.ts` ~ `13-session-runtime.ts`（递进式） |
-| pi 权限扩展示例 | `examples/extensions/permission-gate.ts`（`tool_call` 拦截） |
-| beUI agents 组件 | https://beui.dev/components/agents |
-| beUI registry | `https://beui.dev/r/{slug}` / `/raw` |
-| Beautiful UI 参考 | https://www.beautifului.dev/ |
+| Pi SDK 文档 | 上游仓库 `packages/coding-agent/docs/sdk.md` 的版本化 permalink（随锁定版本更新） |
+| Pi SDK 示例 | 上游仓库 `examples/sdk/13-session-runtime.ts` 与 `examples/extensions/permission-gate.ts` 的版本化 permalink |
+| Electron 安全 | https://www.electronjs.org/docs/latest/tutorial/security |
+| Electron `BrowserWindow` | https://www.electronjs.org/docs/latest/api/browser-window |
+| beUI | https://beui.dev/components/agents |
 | markstream-react | https://www.npmjs.com/package/markstream-react |
