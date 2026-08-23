@@ -1,6 +1,6 @@
 # 桌面 Agent 技术选型文档
 
-> 状态：选型已定，待实施
+> 状态：v0.2（已纳入架构评审修订）
 > 日期：2026-02
 > 目标：基于 pi SDK + Electron 构建本地 coding agent 桌面客户端
 
@@ -8,40 +8,61 @@
 
 ## 1. 总体架构
 
-```
-┌─────────────────────────────────────────────────┐
-│ Electron 渲染进程 (React + Tailwind)             │
-│   beUI 组件 + markstream-react 流式渲染           │
-│              ▲ │ IPC (contextBridge)             │
-├──────────────┼─▼─────────────────────────────────┤
-│ Electron 主进程 (Node)                           │
-│   AgentService: 封装 pi SDK                      │
-└─────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Renderer["Electron 渲染进程"]
+        UI["React 应用组件层<br/>components/agent · session · workspace"]
+        DS["beUI 组件 + markstream-react 流式渲染"]
+        UI --> DS
+    end
+
+    subgraph Main["Electron 主进程"]
+        IPC["Typed IPC Layer<br/>shared/ipc 契约"]
+        AS["AgentService"]
+        AR["AgentRuntime（产品级接口）"]
+        PA["PiAdapter（防腐层）"]
+        PI["pi SDK"]
+
+        PM["PermissionManager<br/>policy · approval · trust · audit"]
+        SS["SessionService<br/>薄封装 pi JSONL 持久化"]
+        MS["ModelService / TerminalService 等"]
+
+        DB[("SQLite（仅索引与审计）<br/>主存储 = pi JSONL")]
+    end
+
+    UI <-->|"Normalized Agent Event"| IPC
+    IPC --> AS --> AR --> PA --> PI
+    PM -.->|tool_call 门控| PI
+    AS --- SS --> DB
+    AS --- MS
 ```
 
 职责划分：
 
-- **主进程**：持有 pi `AgentSession`，执行 agent 循环与工具调用，通过 IPC 向渲染进程转发事件流、接收用户指令。
-- **渲染进程**：纯展示层。聊天流、工具调用面板、会话管理、模型切换，全部通过 IPC 与主进程通信。
+- **渲染进程**：纯展示层。只依赖产品级 `AgentEvent` 和 Typed IPC 契约，**不感知 pi 的存在**。
+- **AgentRuntime / PiAdapter**：防腐层。把 pi 事件归一化为产品事件（`text_delta` → `message.delta`），未来替换 RPC 模式或自研 Runtime 时 UI 层零改动。
+- **PermissionManager**：安全边界。所有工具调用经它门控（allow / deny / ask），approval-card 只是它的 UI。
+- **SessionService**：薄封装 pi 的 JSONL 会话持久化，不重复造存储。
 
 ## 2. 分层选型
 
 | 层 | 选型 | 理由 |
 |---|---|---|
 | Agent 内核 | `@earendil-works/pi-coding-agent` SDK（主进程直嵌） | 官方支持桌面嵌入场景；事件流完整；会话树 / fork / compaction / 多 provider 开箱即用 |
-| Agent 内核备选 | RPC 子进程模式（`pi --mode rpc`） | 如需崩溃隔离或主进程不想引入 pi 依赖时切换 |
+| Agent 内核备选 | RPC 子进程模式（`pi --mode rpc`） | 经 PiAdapter 切换，UI 零改动；协议要求严格按 `\n` 分帧 |
 | 桌面壳 | Electron | 已定 |
 | UI 框架 | React 18+ / Tailwind v4 | beUI 与 markstream-react 的共同 peer 要求 |
-| 组件库 | beUI（shadcn registry 拉取源码） | agent UI 组件工程化程度最高：TypeScript props 完整、支持 reduced-motion；`prompt-input` API 与 pi SDK 天然对齐 |
+| 组件库 | beUI（shadcn registry 拉取源码）+ 自有应用组件层 | beUI 是实现手段不是架构边界；产品组件（`components/agent/AgentMessage` 等）包装 beUI，保证可替换 |
 | Markdown 流渲染 | markstream-react ≥2.0 | 内置 smooth streaming、`htmlPolicy="safe"` 安全默认、Mermaid/KaTeX 可选 peer |
-| 图标 | lucide-react（随 beUI 组件引入） | beUI 源码全部使用 lucide，保留即全项目单一图标族；符合 design-taste 豁免条款（"project already depends on it"）。Phosphor 为可选后续迁移项（见第 6 节） |
+| 图标 | lucide-react（随 beUI 组件引入） | beUI 源码全部使用 lucide，保留即全项目单一图标族；Phosphor 为可选后续迁移项（见第 6 节） |
 | 动画 | Motion (`motion/react`) | beUI 已依赖，不额外引入 GSAP |
+| 本地存储 | pi JSONL（主存储）+ SQLite（仅索引/审计，按需） | 见第 5 节 Session 持久化 |
 
 ### 2.1 为什么是 pi SDK 而不是 RPC
 
 - 同进程类型安全，直接访问 session 状态（`session.messages`、`session.agent.state`）
 - 官方文档明确将 "Build a custom UI (web, desktop, mobile)" 列为 SDK 用例
-- RPC 仅在需要进程隔离时作为后备方案，注意协议要求严格按 `\n` 分帧（不能用 `readline`）
+- RPC 仅在需要进程隔离时通过 PiAdapter 作为后备方案
 
 ### 2.2 为什么是 beUI 而不是 Beautiful UI
 
@@ -52,61 +73,90 @@
 
 ## 3. 核心数据流映射
 
-| pi SDK 事件/API | IPC Channel（建议） | UI 承接 |
-|---|---|---|
-| `text_delta` | `agent:text-delta` | markstream-react：流式中 `smoothStreaming="auto"` + `fade={false}`；历史回放切 `smoothStreaming={false}` + `fade={true}` |
-| `thinking_delta` | `agent:thinking-delta` | beUI `agent-activity` 推理链折叠面板 |
-| `tool_execution_start/end` | `agent:tool-start/end` | beUI `tool-result` chips |
-| edit 工具 `details.patch` | 随 tool-end 载荷 | beUI `file-diff` 渲染文件变更 |
-| 权限确认（扩展拦截 `tool_call`） | `agent:approval-request` / `agent:approval-response` | beUI `approval-card` / `tool-approval` |
-| `isStreaming` / `abort()` | `agent:state` / `agent:abort` | beUI `prompt-input` 的 `loading` / `onStop` |
-| `ModelRuntime.getAvailable()` | `agent:models` | beUI `prompt-input` 的 `models` / `onModelChange` |
-| `SessionManager.list/open` | `session:list` / `session:open` | 会话侧边栏 |
+Pi 事件经 **PiAdapter 归一化**后进入 IPC，渲染进程只消费产品事件：
 
-### 3.1 主进程骨架（示意）
-
-```typescript
-// electron/main/agentService.ts
-import { createAgentSession, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
-
-const modelRuntime = await ModelRuntime.create();
-const { session } = await createAgentSession({
-  sessionManager: SessionManager.inMemory(),
-  modelRuntime,
-});
-
-session.subscribe((event) => {
-  if (event.type === "message_update") {
-    const e = event.assistantMessageEvent;
-    if (e.type === "text_delta") mainWindow.webContents.send("agent:text-delta", e.delta);
-    if (e.type === "thinking_delta") mainWindow.webContents.send("agent:thinking-delta", e.delta);
-  }
-  if (event.type === "tool_execution_start") {
-    mainWindow.webContents.send("agent:tool-start", { name: event.toolName, callId: event.toolCallId });
-  }
-  if (event.type === "tool_execution_end") {
-    mainWindow.webContents.send("agent:tool-end", { callId: event.toolCallId, isError: event.isError });
-  }
-  if (event.type === "agent_end") mainWindow.webContents.send("agent:done");
-});
-
-ipcMain.handle("agent:prompt", (_e, text: string) => session.prompt(text));
-ipcMain.handle("agent:abort", () => session.abort());
+```mermaid
+flowchart LR
+    A["pi 事件<br/>text_delta"] --> B["PiAdapter<br/>归一化 + 补全 sessionId/messageId"]
+    B --> C["AgentEvent 产品事件<br/>message.delta"]
+    C --> D["Typed IPC"]
+    D --> E["React stores"]
 ```
 
-### 3.2 渲染进程骨架（示意）
+| pi SDK 事件/API | PiAdapter 归一化 | 产品事件 / Channel | UI 承接 |
+|---|---|---|---|
+| `text_delta` | 补 sessionId/messageId | `message.delta` | markstream-react：流式中 `smoothStreaming="auto"` + `fade={false}`；历史回放切 `smoothStreaming={false}` + `fade={true}` |
+| `thinking_delta` | 同上 | `thinking.delta` | beUI `agent-activity` 推理链折叠面板 |
+| `tool_execution_start/end` | 统一 toolCallId 载荷 | `tool.started` / `tool.finished` | beUI `tool-result` chips |
+| edit 工具 `details.patch` | 并入 tool.finished 载荷 | `tool.finished{ patch }` | beUI `file-diff` 渲染文件变更 |
+| 扩展拦截 `tool_call` | 转 approval 请求 | `approval.requested` / `approval.resolved` | beUI `approval-card` / `tool-approval` |
+| `isStreaming` / `abort()` | — | `agent.state` / `agent.abort` 命令 | beUI `prompt-input` 的 `loading` / `onStop` |
+| `ModelRuntime.getAvailable()` | ModelInfo[] | `models.list` | beUI `prompt-input` 的 `models` / `onModelChange` |
+| `SessionManager.list/open` | SessionMeta[] | `session.list` / `session.open` | 会话侧边栏 |
+
+### 3.1 Typed IPC 契约
+
+```text
+packages/shared/src/ipc/
+├── events.ts      # AgentEvent 联合类型（单一事实来源）
+├── commands.ts    # 渲染进程 → 主进程命令签名
+└── schemas.ts     # zod / typebox schema 校验（可选）
+```
+
+原则：
+
+- Main 与 Renderer 只 import `shared` 包的类型，禁止在 UI 层出现 pi 类型
+- Channel 字符串由常量枚举生成，不手写字符串
+
+### 3.2 主进程骨架（示意）
+
+```typescript
+// packages/agent-core/src/pi-adapter.ts
+import { createAgentSession, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+
+export class PiAdapter implements AgentRuntime {
+  private session!: AgentSession;
+
+  async start(cwd: string) {
+    // 正式产品用持久化会话，不用 inMemory
+    const modelRuntime = await ModelRuntime.create();
+    const { session } = await createAgentSession({
+      sessionManager: SessionManager.create(cwd),
+      modelRuntime,
+    });
+    this.session = session;
+
+    session.subscribe((event) => {
+      // pi 事件 → 产品事件归一化
+      if (event.type === "message_update") {
+        const e = event.assistantMessageEvent;
+        if (e.type === "text_delta") this.emit({ type: "message.delta", delta: e.delta });
+        if (e.type === "thinking_delta") this.emit({ type: "thinking.delta", delta: e.delta });
+      }
+      if (event.type === "tool_execution_start") {
+        this.emit({ type: "tool.started", toolName: event.toolName, toolCallId: event.toolCallId });
+      }
+      // ...
+    });
+  }
+
+  prompt(input: PromptInput) { return this.session.prompt(input.text); }
+  abort() { return this.session.abort(); }
+}
+```
+
+### 3.3 渲染进程骨架（示意）
 
 ```tsx
-function AssistantMessage({ isStreaming }: { isStreaming: boolean }) {
+function AgentMessage({ isStreaming }: { isStreaming: boolean }) {
   const [content, setContent] = useState("");
 
   useEffect(() => {
-    const onDelta = (_e: unknown, delta: string) => setContent((c) => c + delta);
-    window.agent.onTextDelta(onDelta);
-    return () => window.agent.offTextDelta(onDelta);
+    // 只消费产品事件，不感知 pi
+    const off = window.agent.on("message.delta", (e) => setContent((c) => c + e.delta));
+    return off;
   }, []);
 
-  // 流式 vs 历史动态切换
   return (
     <Markstream
       content={content}
@@ -120,13 +170,53 @@ function AssistantMessage({ isStreaming }: { isStreaming: boolean }) {
 
 注意事项：
 
-- 单条 assistant message 做成独立 memo 组件，delta 只触发自身重渲染
-- `await session.prompt()` 会等整轮结束，流式 UI 完全靠 subscribe 事件驱动，不要在 IPC handler 里等它
+- 单条 message 做成独立 memo 组件，delta 只触发自身重渲染，消息列表其余部分不动
+- `await session.prompt()` 会等整轮结束，流式 UI 完全靠 subscribe 事件驱动
 - 工具调用从文本流中拆出单独渲染，markdown 只渲染纯文本部分
 
-## 4. 安装清单
+## 4. 权限与项目信任（一级模块）
 
-### 4.1 主进程
+> Approval Card 是 UI；PermissionManager 才是安全边界。
+
+pi 无内置权限弹窗，但官方提供 `tool_call` 拦截点（见 `examples/extensions/permission-gate.ts`）：扩展中 `pi.on("tool_call")` 返回 `{ block: true }` 即可阻止执行。我们的实现方式：
+
+```mermaid
+flowchart TB
+    TR["Tool Request<br/>bash / write / edit ..."] --> PERM{"PermissionManager"}
+    PERM -->|allow| RUN["放行执行"]
+    PERM -->|deny| BLOCK["返回 block:true"]
+    PERM -->|ask| UI["IPC → 渲染进程 approval-card"]
+    UI -->|allow once / always / deny| PERM
+    PERM --> AUDIT[("audit log<br/>SQLite 审计表")]
+```
+
+- **PermissionManager** 以 pi extension 形态接入（拦截 `tool_call`），决策结果经 IPC 异步等待渲染进程的 approval-card 回答
+- 决策粒度：本次允许 / 当前会话允许 / 当前工作区允许 / 永久允许 / 拒绝
+- 高危模式（`rm -rf`、`sudo`、`git reset --hard`、`npm publish` 等）默认进 ask 名单
+- **Project Trust**：首次打开项目目录弹出信任确认（Untrusted / Trusted / Restricted），落盘到信任存储，并与权限名单联动
+
+## 5. Session 持久化
+
+**主存储直接使用 pi 的 JSONL 会话文件**，不自建第二份存储：
+
+- pi 会话原生持久化（树结构，支持 branch/fork/resume/import）
+- `SessionManager.create(cwd)` / `continueRecent(cwd)` / `list()` / `listAll()` / `open()` 全部现成
+- `runtime.newSession() / switchSession() / fork()` 负责会话替换
+
+```text
+SessionService（薄封装，非重写）
+├── list()          → SessionManager.listAll + 元数据整理
+├── open(id)        → runtime.switchSession
+├── fork(entryId)   → runtime.fork
+├── rename/delete   → JSONL 文件操作 + 索引同步
+└── search()        → P2 阶段接 SQLite 全文索引
+```
+
+**SQLite 定位（按需引入，不做主存储）**：仅存索引与派生数据——跨会话全文搜索、权限审计日志、应用设置。避免与 JSONL 形成双数据源同步问题。
+
+## 6. 安装清单
+
+### 6.1 主进程 / agent-core
 
 ```bash
 npm i @earendil-works/pi-coding-agent
@@ -134,7 +224,7 @@ npm i @earendil-works/pi-coding-agent
 
 打包时确保 pi 位于 main 的 dependencies（electron-builder 的 `files` 配置），不要被 tree-shake。
 
-### 4.2 渲染进程（最小 peer 集）
+### 6.2 渲染进程（最小 peer 集）
 
 ```bash
 npm i react react-dom tailwindcss motion
@@ -151,7 +241,7 @@ npx shadcn add https://beui.dev/r/prompt-input \
 
 跳过的可选 peer（最小安装原则）：`@terrastruct/d2`、`@antv/infographic`。
 
-### 4.3 CSS 引入顺序（渲染进程入口）
+### 6.3 CSS 引入顺序（渲染进程入口）
 
 ```tsx
 import './reset.css'                          // reset 在前
@@ -165,7 +255,7 @@ Tailwind 项目中 markstream 样式写法：
 @import 'markstream-react/index.css' layer(components);
 ```
 
-## 5. 功能开关
+### 6.4 功能开关
 
 | 功能 | 支持 | 说明 |
 |---|---|---|
@@ -174,25 +264,56 @@ Tailwind 项目中 markstream 样式写法：
 | 增强代码块 / Diff | ✅ `stream-diffs` | 不装则降级普通 `<pre><code>` |
 | D2 / 信息图 | ⏸ 暂不装 | agent 输出极少出现，需要再加 |
 
-## 6. 关键约束与备忘
+## 7. 工程结构与关键约束
 
-1. **安全默认不放宽**：markstream 保持 `htmlPolicy="safe"` 和 Mermaid strict mode（agent 输出不可信）；pi 无内置权限弹窗，确认流程用扩展的 `tool_call` 事件自建，对接 approval-card。
+### 7.1 v0.1 目录结构（最小 monorepo）
+
+```text
+desktop-agent/
+├── apps/
+│   └── desktop/
+│       ├── electron/
+│       │   ├── main.ts            # 生命周期 / 窗口 / IPC 注册
+│       │   ├── ipc/               # 按 agent/session/settings 分文件注册
+│       │   └── services/
+│       └── renderer/
+│           ├── components/
+│           │   ├── agent/         # AgentMessage / AgentThinking / AgentApproval ...
+│           │   ├── session/       # 包装 beUI，隔离组件库 API
+│           │   └── settings/
+│           ├── stores/
+│           └── hooks/
+├── packages/
+│   ├── shared/                    # IPC 契约 + 产品事件类型（Main/Renderer 共用）
+│   └── agent-core/                # PiAdapter + AgentService + PermissionManager
+├── package.json
+├── pnpm-workspace.yaml
+└── tsconfig.json
+```
+
+先只拆 `shared` + `agent-core` 两包，llm/tools/mcp/context 等先用目录边界，出现真实复用需求再提取为独立包。
+
+### 7.2 关键约束
+
+1. **安全默认不放宽**：markstream 保持 `htmlPolicy="safe"` 和 Mermaid strict mode（agent 输出不可信）；权限决策集中在 PermissionManager，UI 不承担决策逻辑。
 2. **pi 只跑在主进程**：依赖 Node API（fs、child_process），不能进渲染进程。
-3. **项目信任机制**：打开新项目目录时用 `defaultProjectTrust` 控制，UI 复刻确认流程。
-4. **MVP 范围**：6 个 beUI 组件起步（见安装清单）；Beautiful UI 仅作参考不引入代码。
-5. **设计纪律**：
+3. **耦合纪律**：UI 不 import pi 类型；beUI 不直接出现在页面组件里（经 components/agent 包装）；SQLite 不被 React 或 pi 直接读写。
+4. **Context 管理**：不自建 ContextManager，订阅 pi 内置 compaction 事件（`compaction_start/end`）做 UI 展示即可。
+5. **MVP 范围**：6 个 beUI 组件起步（见安装清单）；Beautiful UI 仅作参考不引入代码。
+6. **设计纪律**：
    - 单一 accent 色、统一圆角系统、暗色优先双模式（WCAG AA）
    - 反 AI 味清单执行（无装饰性状态点滥用、无 em-dash、无假精确数字、无 div 拼假截图）
    - 三态完整：loading（骨架屏）/ empty / error
-6. **性能**：animate 只用 transform/opacity；`prefers-reduced-motion` 全链路尊重（beUI 内置）；LCP < 2.5s。
-7. **图标策略**：MVP 阶段保留 lucide-react（随 beUI 引入），全项目单一图标族，不混用；全局 `strokeWidth` 统一为 2。若产品成型后需要品牌差异化，再做一次性 Phosphor 迁移（届时组件数量固定，用 codemod 批量改 import，Phosphor regular weight 对齐 lucide strokeWidth 2）
+7. **性能**：animate 只用 transform/opacity；`prefers-reduced-motion` 全链路尊重（beUI 内置）；LCP < 2.5s。
+8. **图标策略**：MVP 阶段保留 lucide-react（随 beUI 引入），全项目单一图标族，不混用；全局 `strokeWidth` 统一为 2。若产品成型后需要品牌差异化，再做一次性 Phosphor 迁移（届时组件数量固定，用 codemod 批量改 import，Phosphor regular weight 对齐 lucide strokeWidth 2）
 
-## 7. 参考资源
+## 8. 参考资源
 
 | 资源 | 地址 |
 |---|---|
 | pi SDK 文档 | 本地 `~/.bun/install/global/node_modules/@earendil-works/pi-coding-agent/docs/sdk.md` |
 | pi SDK 示例 | `examples/sdk/01-minimal.ts` ~ `13-session-runtime.ts`（递进式） |
+| pi 权限扩展示例 | `examples/extensions/permission-gate.ts`（`tool_call` 拦截） |
 | beUI agents 组件 | https://beui.dev/components/agents |
 | beUI registry | `https://beui.dev/r/{slug}` / `/raw` |
 | Beautiful UI 参考 | https://www.beautifului.dev/ |
