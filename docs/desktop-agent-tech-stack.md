@@ -1,6 +1,6 @@
 # 桌面 Agent 技术选型与实施边界
 
-> 状态：v0.4（安全默认已冻结；宿主模型、持久化恢复与 MVP 契约待 Spike 验证后冻结）
+> 状态：v0.5（安全默认已冻结；宿主模型、持久化恢复与 MVP 契约待 Spike 验证后冻结）
 >
 > 日期：2026-08-24
 >
@@ -289,7 +289,7 @@ pi 映射要求：
 | `compaction_start/end` | `context.compaction` |
 | `ModelRuntime.getAvailable()` | `models.list` 命令结果；无可用模型时进入 auth state |
 
-**`messageId` 规则**：pi 的 `UserMessage` / `AssistantMessage` 没有原生 `id`，不可从 message 提取。PiAdapter 在 `message_start` 以当前 session 的 active branch 消息序号合成不透明且确定性的 ID，例如 `${sessionId}:m:${activeBranchOrdinal}`；历史回放按同一分支的 message entry 顺序重建同一序号。pi JSONL 的 session entry 有独立 `id`，可供 Adapter 在持久化后做内部对齐和诊断，但不是产品事件的 messageId。
+**`messageId` 规则**：pi 的 `UserMessage` / `AssistantMessage` 没有原生消息级 `id`，不可从 message 提取（`AssistantMessage.responseId?` 是 provider 层响应 ID，在重试、多分支或部分 provider 下缺失或不稳定，不能用作产品 messageId）。PiAdapter 在 `message_start` 以当前 session 的 active branch 消息序号合成不透明且确定性的 ID，例如 `${sessionId}:m:${activeBranchOrdinal}`；历史回放按同一分支的 message entry 顺序重建同一序号。pi JSONL 的 session entry 有独立 `id`，可供 Adapter 在持久化后做内部对齐和诊断，但不是产品事件的 messageId。
 
 **工具数据规则**：原始工具 input、partial result、result 和 patch 仅留在 Main 的 PermissionManager/AgentRuntime 中。进入 Renderer、审计或错误报告前，必须经 allowlist 序列化、密钥/凭据脱敏与单字段/单事件长度上限处理；`SafePreview` 仅用于展示，禁止把 `unknown` 原样跨 IPC。
 
@@ -317,6 +317,8 @@ pi 映射要求：
 ### 7.1 决策原则
 
 pi `tool_call` 扩展是门控点。PermissionManager 在 Main 中以 extension 绑定，任何工具调用必须产生 `allow`、`deny` 或 `ask` 决策。
+
+> 注意：`allow` / `deny` / `ask` 是产品层决策词汇，pi 原生 `tool_call` 只支持 `{ block: true, reason? }` 或放行（handler 返回即视为放行）。三者的实现映射：**allow** = handler 直接放行；**deny** = 返回 `{ block: true, reason }`；**ask** = 在 async handler 内 await 审批结果后再返回放行或 block——审批 Promise 由 PermissionManager 持有，经 IPC 由 Renderer resolve（见 7.2 节），不得引入不存在的 pi 决策枚举。
 
 - v0.1 scope：**本次**、**当前会话**、**当前工作区**、**拒绝**。
 - 不支持永久 shell 规则；命令字符串不可作为安全可靠的长期匹配键。
