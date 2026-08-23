@@ -344,6 +344,25 @@ desktop-agent/
 7. **性能**：animate 只用 transform/opacity；`prefers-reduced-motion` 全链路尊重（beUI 内置）；LCP < 2.5s。
 8. **图标策略**：MVP 阶段保留 lucide-react（随 beUI 引入），全项目单一图标族，不混用；全局 `strokeWidth` 统一为 2。若产品成型后需要品牌差异化，再做一次性 Phosphor 迁移（届时组件数量固定，用 codemod 批量改 import，Phosphor regular weight 对齐 lucide strokeWidth 2）
 
+### 7.3 实施纪律（v0.3 评审后确定）
+
+**首个任务：Permission Gate Spike**。真实验证 `pi tool_call → PermissionManager → IPC → Approval UI → resolve/block` 异步链路，按 §4.1 生命周期表逐场景验收（多 pending、abort、session 切换、窗口关闭）。这是方案中唯一的新发明，其余均为组装现成能力，Spike 通过 = 最大技术风险消除。
+
+**Session delete 已核实落定**（经 pi 官方文档确认）：
+- pi 无 SDK 删除 API，官方 `/resume` 界面的删除即移除 `.jsonl` 文件，且优先用 trash CLI（可恢复）
+- 我们的 delete 采用同一约定：trash CLI 优先，fallback 直接删除；删除后 `SessionManager.list()` 天然正常
+- rename 走原生 `pi.setSessionName()`，不碰文件
+
+**SQLite sidecar 纪律**：
+- JSONL 始终是主存储；SQLite 仅审计/索引等派生数据，绝不进入 Agent/Session 核心执行路径
+- 审计写入 fire-and-forget：内存队列 + 异步落盘，写失败仅记 warning，绝不阻塞 `tool_call` handler 返回
+- 连接 lazy 初始化：首次审计写入时才建库建表，Agent 启动路径不碰 SQLite
+
+**IPC 契约暂不引入 runtime schema**：
+- v0.1 以 TypeScript 编译期类型作为 Main↔Renderer 契约，zod/typebox 保持可选
+- 引入时机：出现外部不可信输入、插件体系或复杂持久化恢复需求
+- 保留项（与 schema 无关的防线）：PermissionManager 对回写的 approval response 做手写防御校验（requestId 存在性 + status 合法值），权限决策入口不信任任何来路消息
+
 ## 8. 参考资源
 
 | 资源 | 地址 |
