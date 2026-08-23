@@ -296,6 +296,11 @@ export class PiAdapter {
     return { ...this.batcher.stats };
   }
 
+  /** Drain any queued deltas (probe/test seam). */
+  async flush(): Promise<void> {
+    await this.batcher.flush();
+  }
+
   // ── event normalization ────────────────────────────────────────────────────
 
   private mk(type: AgentEvent["type"], rest: Record<string, unknown>): AgentEvent {

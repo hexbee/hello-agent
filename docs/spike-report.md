@@ -17,6 +17,7 @@
 | 7 | Trust matrix 自动化测试 | ✅（部分） | permission-probe 覆盖 untrusted/restricted/trusted 决策矩阵；项目 extensions/skills 不自动执行由 isolation-probe bait 注入证明 |
 | 8 | 文件系统探测隔离断言 | ✅ | isolation-probe：`.pi/extensions` 恶意扩展未执行、`~/.pi/**` 与 `~/.agents/**` 零触碰、trust.json 未写、会话落 app 目录、project_trust 返回 no/false |
 | 9 | 含 pi 的打包产物可启动 | ⚠️ 部分 | electron-vite 产物（pi external）已可启动并完成 §10.6 探针；ASAR 打包/签名/notarization 未做 |
+| + | 真实 LLM 端到端（DeepSeek） | ✅ | e2e-llm-probe：真实流式 delta（含 thinking）、read 工具自动放行、bash 审批 allow 后执行成功、deny 被 block、会话落 app 目录（14/14；`DEEPSEEK_API_KEY=... pnpm probe:e2e-llm`，无 key 自动 SKIP） |
 
 运行方式：`pnpm probe:all`（共 52+5 项检查，全部 PASS）。
 
@@ -56,7 +57,7 @@
 
 ## 4. 遗留事项（进入实施前必须关闭）
 
-1. **真实 LLM 端到端**：权限链路目前用合成 tool_call 驱动；需一次带 key 的完整会话（含 bash/edit 审批实流）。环境变量注入鉴权已实现（`setRuntimeApiKey`），跑通只差提供 key。
+1. ~~真实 LLM 端到端~~ **已完成**：DeepSeek provider（deepseek-v4-flash/pro）验证通过，环境变量鉴权由 pi 原生解析。附带修复：`safePreview` 的 allowlist 序列化原先把工具结果嵌套结构剥空，现改为顶层 allowlist + 嵌套截断透传。
 2. **§10.9 打包**：electron-builder 配置、ASAR 规则（pi external unpack）、签名与 notarization。
 3. **卡死注入测试**（见 ADR 表格第三行）。
 4. **审计 SQLite 化**：当前 JSONL 审计文件满足 §7.2 最小闭环；schema 归入 §1.2 未决项。
@@ -77,4 +78,4 @@ pnpm probe:all                 # §10 自动化验收（isolation/permission/reb
 pnpm dev                       # 手动体验：打开目录 → Trust → prompt → 审批卡 → 压测按钮
 ```
 
-带 key 的端到端：`ANTHROPIC_API_KEY=sk-... pnpm dev`
+带 key 的端到端：`DEEPSEEK_API_KEY=sk-... pnpm probe:e2e-llm`（或 `pnpm dev` 手动体验；模型选 `deepseek/deepseek-v4-flash` 或 `deepseek/deepseek-v4-pro`）
