@@ -1,0 +1,8 @@
+packages:
+  - apps/*
+  - packages/*
+  - spikes
+allowBuilds:
+  '@google/genai': true
+  esbuild: true
+  protobufjs: true

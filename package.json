@@ -1,0 +1,23 @@
+{
+  "name": "hello-agent",
+  "private": true,
+  "version": "0.1.0-spike",
+  "description": "Desktop coding agent spike — validates docs/desktop-agent-tech-stack.md §10",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @spike/desktop dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "probe:isolation": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/isolation-probe.ts",
+    "probe:permission": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/permission-probe.ts",
+    "probe:session-rebind": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/session-rebind-probe.ts",
+    "probe:dispose-rebuild": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/dispose-rebuild-probe.ts",
+    "probe:delta-stress": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/delta-stress-probe.ts",
+    "probe:sandbox": "bash spikes/probes/sandbox-probe.sh",
+    "probe:all": "pnpm probe:isolation && pnpm probe:permission && pnpm probe:session-rebind && pnpm probe:dispose-rebuild && pnpm probe:delta-stress && pnpm probe:sandbox"
+  },
+  "packageManager": "pnpm@11.21.0"
+}
