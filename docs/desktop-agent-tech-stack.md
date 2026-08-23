@@ -1,12 +1,12 @@
 # 桌面 Agent 技术选型与实施边界
 
-> 状态：v0.3（核心方向已选；宿主模型、安全基线与 MVP 契约待 Spike 验证后冻结）
+> 状态：v0.4（安全默认已冻结；宿主模型、持久化恢复与 MVP 契约待 Spike 验证后冻结）
 >
 > 日期：2026-08-24
 >
 > 目标：基于 pi SDK 与 Electron 构建本地 coding agent 桌面客户端。
 
-本文是架构决策和 MVP 实施规格，不是完整 UI 规范。详细评审与未决问题见 [desktop-agent-tech-stack-review.md](./desktop-agent-tech-stack-review.md)。
+本文是架构决策和 MVP 实施规格，不是完整 UI 规范。
 
 ---
 
@@ -24,8 +24,8 @@
 
 - Pi 直嵌主进程、`utilityProcess` 或 RPC 子进程的最终宿主模型。
 - 进程崩溃/卡死后的 runtime dispose、重建和会话恢复语义。
-- provider 鉴权、OAuth/API key 入门与凭据生命周期。
-- Trust matrix 的实际实现和项目资源加载策略。
+- 鉴权实现细节（隔离方案与流程已定，见第 8 节）：系统安全存储选用哪个平台 API，OAuth 走系统浏览器还是内嵌流。
+- JSONL/SQLite 的版本、迁移、备份、恢复、保留期和损坏处理（含审计 schema）。
 - v0.1 的构建/发布方案、精确依赖版本和平台支持。
 
 ### 1.3 v0.1 范围
@@ -58,7 +58,7 @@ flowchart TB
         PM["PermissionManager<br/>policy · approval · trust · audit"]
         SS["SessionService<br/>pi JSONL 薄封装"]
         MS["Model/Auth Service"]
-        DB[("SQLite<br/>审计 · 设置 · 索引")]
+        DB[("SQLite<br/>审计 · 设置")]
     end
 
     subgraph Host["Agent host（待 Spike 决定）"]
@@ -92,7 +92,7 @@ PiAdapter 的目标仅是保持 **Renderer 产品契约** 稳定。若切换 tra
 
 冻结条件：完成第 10 节的 Spike 后，按卡死恢复、事件可靠性、打包复杂度和权限取消语义选择其一，并写入单独 ADR。
 
-## 3. Electron 安全基线
+## 3. Electron 安全默认（设计已冻结，实施待验证）
 
 所有 BrowserWindow 必须采用以下默认值：
 
@@ -115,7 +115,7 @@ new BrowserWindow({
 4. Renderer 不得读取环境变量、`~/.pi/agent/auth.json`、钥匙串、文件系统或原始 API key。主进程不得通过 IPC 返回凭据。
 5. API key/OAuth credential 仅由 Main 管理，保存在系统安全存储；审计、错误报告和日志一律脱敏。
 
-Electron 的官方安全文档要求隔离 context、关闭 Node integration、启用 sandbox，并在 IPC handler 校验 sender；这些是上线前硬性条件。
+Electron 的官方安全文档要求隔离 context、关闭 Node integration、启用 sandbox，并在 IPC handler 校验 sender；这些默认值已经是架构决策。Spike 只验证它们在开发和打包产物中均实际生效、Renderer 仍能通过受限 preload 完成产品流程。
 
 ## 4. 工作区、Trust 与 runtime 生命周期
 
@@ -154,9 +154,30 @@ stateDiagram-v2
 | 项目 extensions / skills / 自定义配置 | 否 | 否 | 否（v0.1） |
 | MCP | 否 | 否 | 否（v0.1） |
 
-Trusted 不等于无限信任。项目资源自动加载在 v0.1 一律关闭，后续作为独立安全设计；这避免项目内容或 prompt injection 直接获得宿主代码执行能力。
+Untrusted 是“尚未授权”的打开结果：应用只显示目录信息与 Trust 选择，不创建 Agent runtime；用户取消即返回文件夹选择，不将它当成可工作的 Agent 模式。
 
-### 4.3 故障与恢复
+Restricted 创建 runtime 时固定传入内置只读工具 allowlist：`["read", "grep", "find", "ls"]`。PermissionManager 对每次工具输入中的路径先 `realpath`，再校验其位于 canonical cwd 内；路径不存在、无法解析、符号链接逃逸或指向工作区外时一律拒绝。Trusted 仍执行同一边界检查，额外能力只可经审批放行。
+
+### 4.3 资源发现与 Pi 内建 Trust
+
+Trusted 不等于允许执行项目资源。v0.1 使用**产品自有 ResourceLoader**，禁止 `DefaultResourceLoader` 的默认发现：不扫描 `.pi/extensions`、`.pi/skills`、`.agents/skills`、`AGENTS.md`、`CLAUDE.md`、`~/.pi/agent/extensions`、`~/.pi/agent/skills` 或 `~/.pi/agent/AGENTS.md`。唯一允许的扩展为应用内联 `extensionFactories` 注册的 PermissionManager；`extensionFactories` 只用于注册允许项，不能被视为关闭默认发现的开关。
+
+Pi 内建 Project Trust（`~/.pi/agent/trust.json`）在 v0.1 完全旁路：产品 Trust 是唯一决策来源，应用的内联 `project_trust` handler 始终返回 `{ trusted: "no", remember: false }`。Pi CLI 与桌面应用的 Trust 决策互不读取、互不覆盖。后续若需要加载项目资源，必须单独设计两套 Trust 的迁移/复用策略并经过安全评审。
+
+### 4.4 配置与存储路径隔离（v0.1 写死）
+
+资源发现与 auth.json 之外，以下 CLI 默认路径同样全部旁路，不得读取或写入：
+
+| pi 能力 | CLI 默认路径 | 桌面应用替代 |
+|---|---|---|
+| 全局/项目 settings | `~/.pi/agent/settings.json`、`.pi/settings.json` | `SettingsManager.inMemory(...)` 或指向应用私有 agentDir 的 `create` |
+| 自定义模型目录 | `~/.pi/agent/models.json` | `ModelRuntime.create({ modelsPath })` 指向应用数据目录 |
+| 凭据 | `~/.pi/agent/auth.json` | 应用 `CredentialStore`（见第 8 节） |
+| 会话存储 | `~/.pi/agent/sessions/` | `SessionManager.create(cwd, sessionDir)` 显式传入应用自己的 session-dir（如 `app.getPath('userData')/sessions/`），与 CLI 会话互不可见 |
+
+理由：全局 settings 可改工具开关、packages 与 `defaultProjectTrust`，等于给 CLI 配置留了改变桌面应用安全行为的通道。所有路径隔离在 Spike 中用文件系统探测断言验证（见第 10 节）。
+
+### 4.5 故障与恢复
 
 - 普通 Agent 异常：保留窗口，进入 failed 状态，停止输入，记录脱敏诊断，尝试 `dispose()` 旧 runtime 并显式提供“重建 runtime”。
 - Main 无响应、OOM 或原生崩溃：属于直嵌方案的风险，Spike 必须量化；若不满足恢复目标，改用隔离 host。
@@ -185,6 +206,20 @@ pi 的 `newSession`、`switchSession`、`fork` 会替换 live session；实现�
 
 绑定是异步原子流程：先取消旧订阅，拿到 `runtime.session`，`await session.bindExtensions(actualBindings)`，再订阅事件。`actualBindings` 必须包含 PermissionManager 所需的扩展绑定；不能使用无参 `bindExtensions()` 伪代码。
 
+**工厂必须整条自建**：`createAgentSessionServices({ cwd })` 默认会挂上 `DefaultResourceLoader` 并读取 CLI 路径。factory 中必须显式注入全部隔离项（接口均已支持）：
+
+```ts
+const services = await createAgentSessionServices({
+  cwd,
+  agentDir: appPrivateAgentDir,          // 指向应用私有目录，控断全局扩展/skills/settings 扫描
+  settingsManager: SettingsManager.inMemory(),
+  modelRuntime,                          // 已注入应用 CredentialStore + modelsPath
+  resourceLoaderOptions: { /* overrides 返回空数组，压掉项目资源发现 */ },
+});
+```
+
+注意：`createAgentSessionServices` 不接受自定义 `ResourceLoader` 实例，只接受 `resourceLoaderOptions`（内部仍构造 `DefaultResourceLoader`）；隔离靠 agentDir 重定向 + override 置空实现。Spike 用文件系统探测断言以上路径均未被扫描（见第 10 节）。
+
 ```ts
 private async bindCurrentSession() {
   this.unsubscribe?.();
@@ -205,7 +240,7 @@ async switchSession(path: string) {
 - rename 使用 pi API，不直接修改 JSONL。
 - delete 仅接收 SessionManager 返回的已验证会话路径；优先移入回收站。若必须永久删除，需二次确认并拒绝 symlink/工作区外路径。
 - SQLite 只保存审计、设置和未来索引；不进入 Agent/Session 执行主路径，也不与 JSONL 双写为主数据。
-- 定义 JSONL/SQLite 的版本、迁移、备份、恢复、保留期和损坏处理。审计库可在首次审计写入时 lazy 初始化，但它是 v0.1 权限闭环的一部分。
+- 审计库可在首次审计写入时 lazy 初始化，但它是 v0.1 权限闭环的一部分。JSONL/SQLite 的版本、迁移、备份、恢复、保留期和损坏处理仍是第 1.2 节的冻结前未决项，不得假定已经完成。
 
 ## 6. 产品事件与 IPC
 
@@ -226,14 +261,20 @@ type AgentEvent =
   | (EventBase & { type: "message.delta"; messageId: string; delta: string })
   | (EventBase & { type: "message.finished"; messageId: string })
   | (EventBase & { type: "thinking.delta"; messageId: string; delta: string })
-  | (EventBase & { type: "tool.started"; toolCallId: string; toolName: string; input: unknown })
-  | (EventBase & { type: "tool.updated"; toolCallId: string; partialResult: unknown })
-  | (EventBase & { type: "tool.finished"; toolCallId: string; isError: boolean; result: unknown; patch?: unknown })
+  | (EventBase & { type: "tool.started"; toolCallId: string; toolName: string; inputPreview: SafePreview })
+  | (EventBase & { type: "tool.updated"; toolCallId: string; outputPreview: SafePreview })
+  | (EventBase & { type: "tool.finished"; toolCallId: string; isError: boolean; resultPreview: SafePreview; patch?: SafePreview })
   | (EventBase & { type: "agent.state"; state: "running" | "idle" | "aborted" | "failed" })
   | (EventBase & { type: "agent.failed"; kind: "llm" | "tool" | "permission" | "network" | "runtime"; message: string })
   | (EventBase & { type: "context.compaction"; phase: "started" | "finished" })
-  | (EventBase & { type: "approval.requested"; requestId: string; toolCallId: string; toolName: string; input: unknown })
+  | (EventBase & { type: "approval.requested"; requestId: string; toolCallId: string; toolName: string; displayInput: SafePreview })
   | (EventBase & { type: "approval.resolved"; requestId: string; decision: "allow" | "deny" | "cancelled" | "expired" });
+
+type SafePreview = {
+  text: string;
+  truncated: boolean;
+  redacted: boolean;
+};
 ```
 
 pi 映射要求：
@@ -250,10 +291,24 @@ pi 映射要求：
 
 **`messageId` 规则**：pi 的 `UserMessage` / `AssistantMessage` 没有原生 `id`，不可从 message 提取。PiAdapter 在 `message_start` 以当前 session 的 active branch 消息序号合成不透明且确定性的 ID，例如 `${sessionId}:m:${activeBranchOrdinal}`；历史回放按同一分支的 message entry 顺序重建同一序号。pi JSONL 的 session entry 有独立 `id`，可供 Adapter 在持久化后做内部对齐和诊断，但不是产品事件的 messageId。
 
-### 6.2 IPC 规则、背压与恢复
+**工具数据规则**：原始工具 input、partial result、result 和 patch 仅留在 Main 的 PermissionManager/AgentRuntime 中。进入 Renderer、审计或错误报告前，必须经 allowlist 序列化、密钥/凭据脱敏与单字段/单事件长度上限处理；`SafePreview` 仅用于展示，禁止把 `unknown` 原样跨 IPC。
+
+### 6.2 Renderer → Main 命令
+
+`commands.ts` 必须为每个命令定义请求、成功结果、错误结果和 runtime validator。v0.1 最小命令集：
+
+| 域 | 命令 |
+|---|---|
+| 工作区 | `workspace.open`、`workspace.trust.set`、`workspace.close` |
+| 鉴权 / 模型 | `auth.status`、`auth.begin`、`auth.submitKey`、`auth.cancel`、`models.list`、`models.select` |
+| 会话 | `session.list`、`session.open`、`session.new`、`session.fork`、`session.rename`、`session.delete` |
+| Agent | `agent.prompt`、`agent.abort`、`agent.snapshot` |
+| 权限 | `approval.resolve` |
+
+### 6.3 IPC 规则、背压与恢复
 
 - `packages/shared/src/ipc/events.ts`、`commands.ts`、`schemas.ts` 是单一事实来源。**这取代此前“v0.1 暂不引入 runtime schema”的决定**：所有 Renderer → Main command 使用随 `shared` 包交付的运行时校验器（轻量手写 validator 或 TypeBox），不得只依赖 TypeScript 类型；approval response 还须校验 request 所属会话、sender 和当前 pending 状态。
-- Main 保存可重建的当前 snapshot。Renderer 重载、崩溃重启或发现 sequence gap 时调用 `agent.snapshot`，不得假设 delta 不会丢失。
+- Main 保存可重建的当前 snapshot。snapshot 至少包含 `version`、最后 `sequence`、canonical cwd、Trust、session 元数据、完整可展示消息、当前 Agent 状态、活跃 message/tool 的 `SafePreview`、待审批请求和脱敏 auth/model state；不得包含凭据、原始工具输入/输出或无截断 patch。Renderer 重载、崩溃重启或发现 sequence gap 时调用 `agent.snapshot`，不得假设 delta 不会丢失。
 - delta 通过有上限的合批队列发送（按短时间窗口或最大字节数 flush），并保留顺序号；不能为每个 delta 无限制发 IPC。
 - Spike 目标：1,000+ delta 的长流中 Renderer 不冻结、内存不持续增长、事件不失序，记录 batch 窗口、大小和延迟结果。
 
@@ -291,15 +346,17 @@ type PendingApproval = {
 | 超时 | 标记 expired，拒绝执行 |
 | 重复或伪造响应 | 只接受首次、当前 sender 的合法响应；其余拒绝并审计 |
 
-审计写入采用内存队列和异步落盘，失败只记录 warning，不能阻塞工具 handler；但审计 schema、迁移和保留策略必须在 v0.1 定义。
+审计写入采用内存队列和异步落盘，失败只记录 warning，不能阻塞工具 handler；审计 schema、迁移和保留策略随第 1.2 节未决项一起定，不阻塞 Spike。
 
 ## 8. 鉴权与模型
+
+桌面应用凭据与本机 Pi CLI **默认隔离**。Main 创建 `ModelRuntime` 时注入应用的 `CredentialStore` 适配器，将 provider credential 保存在系统安全存储；v0.1 不读取、不写入 `~/.pi/agent/auth.json`，也不复用 CLI OAuth/API key。显式导入 CLI 凭据是后续独立功能，必须取得用户确认并重新进行安全评审。
 
 首次启动和切换 provider 时，Main 负责：
 
 1. 列出 provider 与认证方式，接收经 schema 验证的 API key/OAuth 发起请求。
 2. 使用 pi 的认证/模型能力检查凭据，读取可用模型；Renderer 只得到脱敏 auth state 和 `ModelInfo[]`。
-3. 将凭据写入系统安全存储；取消、失败、过期或 provider 不可用均返回可重试错误态。
+3. 通过应用 `CredentialStore` 将凭据写入系统安全存储；取消、失败、过期或 provider 不可用均返回可重试错误态。
 4. 正在运行时禁止切换模型/凭据，或明确先 abort 后切换；不得留下半配置 runtime。
 
 必须覆盖：首次无凭据、OAuth 取消、API key 错误、provider 网络错误、凭据过期和没有可用模型。
@@ -331,7 +388,8 @@ type PendingApproval = {
 5. 1,000+ delta 压测中 IPC 合批有序、Renderer 不冻结、无无界积压。
 6. Renderer 只能访问 preload 白名单，不拥有 Node、文件系统、pi auth 文件、API key 或通用 IPC。
 7. Untrusted/Restricted/Trusted 各项 Trust matrix 都有自动化测试；项目 extensions/skills 在 v0.1 不会被自动执行。
-8. 包含 pi 依赖的打包产物可启动，并在目标平台验证最小会话、认证和权限链路。
+8. **文件系统探测隔离断言**：运行全链路后，以下路径均无读取或写入——`~/.pi/agent/trust.json`、`~/.pi/agent/auth.json`、CLI `settings.json`、CLI `models.json`、CLI sessions 目录、项目 `.pi/*`；`project_trust` 返回 `{ trusted: "no", remember: false }` 且不写回 trust 文件；会话落在应用自己的 session-dir。
+9. 包含 pi 依赖的打包产物可启动，并在目标平台验证最小会话、认证和权限链路。
 
 Spike 通过并完成宿主模型 ADR 后，才能将本文状态改为“架构冻结，进入实施”。
 
