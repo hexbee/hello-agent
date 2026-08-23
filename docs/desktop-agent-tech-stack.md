@@ -160,7 +160,7 @@ Restricted 创建 runtime 时固定传入内置只读工具 allowlist：`["read"
 
 ### 4.3 资源发现与 Pi 内建 Trust
 
-Trusted 不等于允许执行项目资源。v0.1 使用**产品自有 ResourceLoader**，禁止 `DefaultResourceLoader` 的默认发现：不扫描 `.pi/extensions`、`.pi/skills`、`.agents/skills`、`AGENTS.md`、`CLAUDE.md`、`~/.pi/agent/extensions`、`~/.pi/agent/skills` 或 `~/.pi/agent/AGENTS.md`。唯一允许的扩展为应用内联 `extensionFactories` 注册的 PermissionManager；`extensionFactories` 只用于注册允许项，不能被视为关闭默认发现的开关。
+Trusted 不等于允许执行项目资源。v0.1 不做自定义 loader，而是接受内部仍为 `DefaultResourceLoader` 的实现，隔离靠两个手段：`agentDir` 重定向到应用私有目录 + 各 override 置空压掉默认发现。禁止扫描的路径：`.pi/extensions`、`.pi/skills`、`.agents/skills/`（cwd 及祖先目录）、`AGENTS.md`、`CLAUDE.md`、`~/.pi/agent/extensions`、`~/.pi/agent/skills`、`~/.pi/agent/AGENTS.md`、**`~/.agents/skills/`**。唯一允许的扩展为应用内联 `extensionFactories` 注册的 PermissionManager；`extensionFactories` 只用于注册允许项，不能被视为关闭默认发现的开关。
 
 Pi 内建 Project Trust（`~/.pi/agent/trust.json`）在 v0.1 完全旁路：产品 Trust 是唯一决策来源，应用的内联 `project_trust` handler 始终返回 `{ trusted: "no", remember: false }`。Pi CLI 与桌面应用的 Trust 决策互不读取、互不覆盖。后续若需要加载项目资源，必须单独设计两套 Trust 的迁移/复用策略并经过安全评审。
 
@@ -173,7 +173,7 @@ Pi 内建 Project Trust（`~/.pi/agent/trust.json`）在 v0.1 完全旁路：产
 | 全局/项目 settings | `~/.pi/agent/settings.json`、`.pi/settings.json` | `SettingsManager.inMemory(...)` 或指向应用私有 agentDir 的 `create` |
 | 自定义模型目录 | `~/.pi/agent/models.json` | `ModelRuntime.create({ modelsPath })` 指向应用数据目录 |
 | 凭据 | `~/.pi/agent/auth.json` | 应用 `CredentialStore`（见第 8 节） |
-| 会话存储 | `~/.pi/agent/sessions/` | `SessionManager.create(cwd, sessionDir)` 显式传入应用自己的 session-dir（如 `app.getPath('userData')/sessions/`），与 CLI 会话互不可见 |
+| 会话存储 | `~/.pi/agent/sessions/` | 显式构造 `SessionManager.create(cwd, sessionDir)` 并传入 runtime factory（如 `app.getPath('userData')/sessions/`）。注意：改 `agentDir` 不会改变会话目录，两者是独立参数，必须显式传 `sessionManager`；与 CLI 会话互不可见 |
 
 理由：全局 settings 可改工具开关、packages 与 `defaultProjectTrust`，等于给 CLI 配置留了改变桌面应用安全行为的通道。所有路径隔离在 Spike 中用文件系统探测断言验证（见第 10 节）。
 
@@ -218,7 +218,7 @@ const services = await createAgentSessionServices({
 });
 ```
 
-注意：`createAgentSessionServices` 不接受自定义 `ResourceLoader` 实例，只接受 `resourceLoaderOptions`（内部仍构造 `DefaultResourceLoader`）；隔离靠 agentDir 重定向 + override 置空实现。Spike 用文件系统探测断言以上路径均未被扫描（见第 10 节）。
+注意：`createAgentSessionServices` 不接受自定义 `ResourceLoader` 实例，只接受 `resourceLoaderOptions`（内部仍构造 `DefaultResourceLoader`）；隔离靠 agentDir 重定向 + override 置空实现。**`resourceLoaderOptions` 目前只出现在类型定义中、未见于公开 SDK 文档，Spike 第一天必须对锁定版本的 .d.ts 核对；若对不上，改用自建 loader 交给 `createAgentSession({ resourceLoader })` 路径，不得把未证实参数冻进实现。**Spike 用文件系统探测断言以上路径均未被扫描（见第 10 节）。
 
 ```ts
 private async bindCurrentSession() {
@@ -388,7 +388,7 @@ type PendingApproval = {
 5. 1,000+ delta 压测中 IPC 合批有序、Renderer 不冻结、无无界积压。
 6. Renderer 只能访问 preload 白名单，不拥有 Node、文件系统、pi auth 文件、API key 或通用 IPC。
 7. Untrusted/Restricted/Trusted 各项 Trust matrix 都有自动化测试；项目 extensions/skills 在 v0.1 不会被自动执行。
-8. **文件系统探测隔离断言**：运行全链路后，以下路径均无读取或写入——`~/.pi/agent/trust.json`、`~/.pi/agent/auth.json`、CLI `settings.json`、CLI `models.json`、CLI sessions 目录、项目 `.pi/*`；`project_trust` 返回 `{ trusted: "no", remember: false }` 且不写回 trust 文件；会话落在应用自己的 session-dir。
+8. **文件系统探测隔离断言**：运行全链路后，以下路径均无读取或写入——`~/.pi/agent/trust.json`、`~/.pi/agent/auth.json`、CLI `settings.json`、CLI `models.json`、CLI sessions 目录、项目 `.pi/*`、项目及全局 `.agents/skills/`；`project_trust` 返回 `{ trusted: "no", remember: false }` 且不写回 trust 文件；会话落在应用自己的 session-dir。
 9. 包含 pi 依赖的打包产物可启动，并在目标平台验证最小会话、认证和权限链路。
 
 Spike 通过并完成宿主模型 ADR 后，才能将本文状态改为“架构冻结，进入实施”。
