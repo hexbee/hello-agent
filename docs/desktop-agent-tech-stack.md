@@ -1,6 +1,6 @@
 # 桌面 Agent 技术选型文档
 
-> 状态：v0.2（已纳入架构评审修订）
+> 状态：v0.3（架构冻结，进入实施）
 > 日期：2026-02
 > 目标：基于 pi SDK + Electron 构建本地 coding agent 桌面客户端
 
@@ -93,6 +93,9 @@ flowchart LR
 | `isStreaming` / `abort()` | — | `agent.state` / `agent.abort` 命令 | beUI `prompt-input` 的 `loading` / `onStop` |
 | `ModelRuntime.getAvailable()` | ModelInfo[] | `models.list` | beUI `prompt-input` 的 `models` / `onModelChange` |
 | `SessionManager.list/open` | SessionMeta[] | `session.list` / `session.open` | 会话侧边栏 |
+| `agent_start` / `agent_end` | 补结束原因（completed / aborted / failed） | `agent.started` / `agent.completed` / `agent.aborted` | 驱动 UI loading / 完成态 / 停止态 |
+| `state.errorMessage` + `auto_retry_*` | 细分错误类型（llm / tool / permission / network / runtime） | `agent.failed{ kind }` | 错误提示、重试按钮；重试中状态接 `auto_retry_*` 事件 |
+| `compaction_start/end` | — | `context.compaction` | 上下文压缩进度提示（不自建 ContextManager，仅展示） |
 
 ### 3.1 Typed IPC 契约
 
@@ -191,9 +194,40 @@ flowchart TB
 ```
 
 - **PermissionManager** 以 pi extension 形态接入（拦截 `tool_call`），决策结果经 IPC 异步等待渲染进程的 approval-card 回答
-- 决策粒度：本次允许 / 当前会话允许 / 当前工作区允许 / 永久允许 / 拒绝
+- 决策粒度带 scope：本次允许 / 当前会话允许 / 当前工作区允许 / 永久允许（记录到 tool + command + scope 粒度，如 "allow: bash `git status` @ workspace"，不做粗粒度的"永久允许整个工具"）/ 拒绝。v0.1 只存 scope 字段，不建 rule engine
 - 高危模式（`rm -rf`、`sudo`、`git reset --hard`、`npm publish` 等）默认进 ask 名单
 - **Project Trust**：首次打开项目目录弹出信任确认（Untrusted / Trusted / Restricted），落盘到信任存储，并与权限名单联动
+
+### 4.1 PendingApproval 状态机
+
+`ask` 路径是跨进程异步流程（pi tool_call → 主进程挂起 → IPC → 渲染进程 → 用户决策 → IPC 回写），必须显式管理未决状态：
+
+```typescript
+type PendingApproval = {
+  requestId: string;
+  sessionId: string;
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  createdAt: number;
+  status: "pending" | "resolved" | "cancelled" | "expired";
+};
+```
+
+主进程维护 ApprovalRegistry（PendingApprovalStore），扩展的 `tool_call` handler 返回一个 Promise，由 registry 在收到渲染进程响应时 resolve。
+
+**必须处理的生命周期**（否则 Promise 泄漏 / UI 悬挂）：
+
+| 场景 | 处理 |
+|---|---|
+| 多个工具同时等待审批 | requestId 一一对应，各自独立 resolve |
+| 用户 abort（Escape / 停止按钮） | 取消该会话所有 pending → status=cancelled，pi 侧 handler 以 block 返回 |
+| 切换/新建会话 | 取消旧会话 pending |
+| 窗口关闭 / renderer 崩溃 | 主进程超时兜底，全部置 cancelled |
+| 审批超时 | 可配置 TTL，过期置 expired 并拒绝执行 |
+| 重复响应（同 requestId 二次回写） | 幂等：仅首次生效 |
+
+安全相关逻辑（本节全部行为）作为独立测试重点，不等 UI 完成后补测：allow / deny / ask / abort / timeout / window close / session switch / renderer crash / duplicate response。
 
 ## 5. Session 持久化
 
@@ -204,13 +238,16 @@ flowchart TB
 - `runtime.newSession() / switchSession() / fork()` 负责会话替换
 
 ```text
-SessionService（薄封装，非重写）
+SessionService（薄封装，非重写；原则：pi 有的用 pi API，没有的才加最薄适配）
 ├── list()          → SessionManager.listAll + 元数据整理
 ├── open(id)        → runtime.switchSession
 ├── fork(entryId)   → runtime.fork
-├── rename/delete   → JSONL 文件操作 + 索引同步
-└── search()        → P2 阶段接 SQLite 全文索引
+├── rename(name)    → pi.setSessionName()（原生 API，勿直接改 JSONL）
+├── delete(id)      → 移除 .jsonl 文件；优先 trash CLI（与 pi /resume 行为一致，可恢复）
+└── search()        → P2 产品功能，届时再定 SQLite 全文索引 schema
 ```
+
+原则：避免 SessionService 膨胀成第二套 Session Runtime；AgentRuntime 接口同理——只暴露产品真实需要的能力，不做 pi API 全量 wrapper。
 
 **SQLite 定位（按需引入，不做主存储）**：仅存索引与派生数据——跨会话全文搜索、权限审计日志、应用设置。避免与 JSONL 形成双数据源同步问题。
 
