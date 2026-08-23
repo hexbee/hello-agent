@@ -119,6 +119,7 @@ import { createAgentSession, ModelRuntime, SessionManager } from "@earendil-work
 
 export class PiAdapter implements AgentRuntime {
   private session!: AgentSession;
+  private unsubscribe: (() => void) | undefined;
 
   async start(cwd: string) {
     // 正式产品用持久化会话，不用 inMemory
@@ -127,9 +128,14 @@ export class PiAdapter implements AgentRuntime {
       sessionManager: SessionManager.create(cwd),
       modelRuntime,
     });
-    this.session = session;
+    this.attach(session);
+  }
 
-    session.subscribe((event) => {
+  /** 会话替换（switch/new/fork）后必须重绑：事件订阅挂在具体 AgentSession 上 */
+  private attach(session: AgentSession) {
+    this.unsubscribe?.();
+    this.session = session;
+    this.unsubscribe = session.subscribe((event) => {
       // pi 事件 → 产品事件归一化
       if (event.type === "message_update") {
         const e = event.assistantMessageEvent;
@@ -145,8 +151,17 @@ export class PiAdapter implements AgentRuntime {
 
   prompt(input: PromptInput) { return this.session.prompt(input.text); }
   abort() { return this.session.abort(); }
+
+  /** 由 SessionService 在 switchSession/newSession/fork 后调用 */
+  rebind(runtime: AgentSessionRuntime) {
+    this.attach(runtime.session);
+    // 扩展也挂在具体 session 上：PermissionManager 等扩展必须重绑，否则门控静默失效
+    runtime.session.bindExtensions();
+  }
 }
 ```
+
+**事件重绑定纪律（真实缺口，勿省略）**：pi 的订阅和扩展都挂在具体 `AgentSession` 实例上，`switchSession()/newSession()/fork()` 会替换实例。PiAdapter 必须封装 attach/rebind（subscribe 返回 unsubscribe，替换后先退订再重挂），扩展侧调用 `runtime.session.bindExtensions()`。已纳入 Spike 验收清单。
 
 ### 3.3 渲染进程骨架（示意）
 
@@ -347,6 +362,11 @@ desktop-agent/
 ### 7.3 实施纪律（v0.3 评审后确定）
 
 **首个任务：Permission Gate Spike**。真实验证 `pi tool_call → PermissionManager → IPC → Approval UI → resolve/block` 异步链路，按 §4.1 生命周期表逐场景验收（多 pending、abort、session 切换、窗口关闭）。这是方案中唯一的新发明，其余均为组装现成能力，Spike 通过 = 最大技术风险消除。
+
+Spike 验收附加项：
+- **事件重绑定**：switch/new/fork 会话后 delta/tool/权限拦截仍正常工作（见 §3.2 重绑定纪律）
+- **toolCallId 断言**：SDK 层 `tool_execution_start/end` 事件的 `toolCallId` 已经类型定义确认存在（`pi-agent-core` AgentEvent），Spike 中加一行运行时断言即可
+- **实现提醒**：自建 PermissionManager 扩展持有自己的 Promise registry，不复用官方 permission-gate.ts 的 `ctx.ui` helper（其 `ctx.hasUI === false` 直接 block 的分支不适用于我们）
 
 **Session delete 已核实落定**（经 pi 官方文档确认）：
 - pi 无 SDK 删除 API，官方 `/resume` 界面的删除即移除 `.jsonl` 文件，且优先用 trash CLI（可恢复）
