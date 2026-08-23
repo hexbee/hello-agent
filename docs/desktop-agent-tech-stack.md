@@ -218,7 +218,7 @@ const services = await createAgentSessionServices({
 });
 ```
 
-注意：`createAgentSessionServices` 不接受自定义 `ResourceLoader` 实例，只接受 `resourceLoaderOptions`（内部仍构造 `DefaultResourceLoader`）；隔离靠 agentDir 重定向 + override 置空实现。**`resourceLoaderOptions` 目前只出现在类型定义中、未见于公开 SDK 文档，Spike 第一天必须对锁定版本的 .d.ts 核对；若对不上，改用自建 loader 交给 `createAgentSession({ resourceLoader })` 路径，不得把未证实参数冻进实现。**Spike 用文件系统探测断言以上路径均未被扫描（见第 10 节）。
+注意：`createAgentSessionServices` 不接受自定义 `ResourceLoader` 实例，只接受 `resourceLoaderOptions`（内部仍构造 `DefaultResourceLoader`）；隔离靠 agentDir 重定向 + override 置空实现。**`resourceLoaderOptions` 目前只出现在类型定义中、未见于公开 SDK 文档，Spike 第一天必须对锁定版本的 .d.ts 核对；若对不上，回退路径是：自建 `DefaultResourceLoader` 实例（override 置空 + `extensionFactories`），利用 `AgentSessionServices.resourceLoader` 字段手工组装 services 对象后交给 `createAgentSessionFromServices` / factory——不得退回单次 `createAgentSession()`，否则 switch/fork 会丢绑定（见本节开头的 replacement 原则）。**Spike 用文件系统探测断言以上路径均未被扫描（见第 10 节）。
 
 ```ts
 private async bindCurrentSession() {
