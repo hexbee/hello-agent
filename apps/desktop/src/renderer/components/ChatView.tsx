@@ -1,6 +1,6 @@
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import Markstream from "markstream-react";
-import type { MessageItem, ToolItem } from "../store";
+import type { ChatEntry, MessageItem, ToolItem } from "../store";
 import { store, useStore } from "../store";
 import { ApprovalStack } from "./ApprovalStack";
 import { Composer } from "./Composer";
@@ -95,43 +95,70 @@ export function ChatView() {
   const s = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
+  const [pinned, setPinned] = useState(true);
 
   // Reader-aware follow: stick to the live edge until the user scrolls away.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onScroll = () => {
-      pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      const p = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      pinnedRef.current = p;
+      setPinned((prev) => (prev === p ? prev : p));
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
 
-  const lastEntryId =
-    s.entries.length > 0 ? entryKey(s.entries[s.entries.length - 1]!) : "";
+  // Follow not only on new entries, but on every delta that grows the live
+  // edge (streaming text / thinking / tool output) — otherwise long streamed
+  // replies grow below the viewport until the next entry forces a jump.
+  const lastEntry = s.entries[s.entries.length - 1];
+  const lastEntryId = lastEntry ? entryKey(lastEntry) : "";
+  const liveEdgeKey = lastEntry ? liveKey(lastEntry) : "";
   useEffect(() => {
     const el = scrollRef.current;
     if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
-  }, [lastEntryId, s.entries.length]);
+  }, [lastEntryId, liveEdgeKey]);
+
+  const jumpToBottom = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    pinnedRef.current = true;
+    setPinned(true);
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  };
 
   return (
     <>
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-        {s.entries.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-muted">
-            <div className="text-base">开始新的对话</div>
-            <div className="text-xs">输入消息，agent 将在工作区内协助你。</div>
-          </div>
-        ) : (
-          <div className="mx-auto flex max-w-3xl flex-col gap-4">
-            {s.entries.map((e) =>
-              e.kind === "message" ? (
-                <MessageView key={e.messageId} m={e} />
-              ) : (
-                <ToolCard key={e.toolCallId} t={e} />
-              ),
-            )}
-          </div>
+      <div className="relative min-h-0 flex-1">
+        <div ref={scrollRef} className="h-full overflow-y-auto px-6 py-4">
+          {s.entries.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2 text-muted">
+              <div className="text-base">开始新的对话</div>
+              <div className="text-xs">输入消息，agent 将在工作区内协助你。</div>
+            </div>
+          ) : (
+            <div className="mx-auto flex max-w-3xl flex-col gap-4">
+              {s.entries.map((e) =>
+                e.kind === "message" ? (
+                  <MessageView key={e.messageId} m={e} />
+                ) : (
+                  <ToolCard key={e.toolCallId} t={e} />
+                ),
+              )}
+            </div>
+          )}
+        </div>
+        {!pinned && (
+          <button
+            type="button"
+            onClick={jumpToBottom}
+            title="回到底部并继续跟随"
+            className="absolute bottom-3 right-8 flex h-9 items-center gap-1 rounded-full border border-border bg-panel px-3 text-sm text-fg shadow-lg transition hover:border-accent/50 hover:text-accent"
+          >
+            回到底部 ↓
+          </button>
         )}
       </div>
 
@@ -145,6 +172,19 @@ export function ChatView() {
 
 function entryKey(e: MessageItem | ToolItem): string {
   return e.kind === "message" ? e.messageId : e.toolCallId;
+}
+
+/** Signature that changes whenever the last entry's visible content grows. */
+function liveKey(e: ChatEntry): string {
+  if (e.kind === "message") {
+    return `${e.text.length}:${e.thinking?.length ?? 0}:${e.streaming ? 1 : 0}`;
+  }
+  return [
+    e.status,
+    e.outputPreview?.text.length ?? 0,
+    e.resultPreview?.text.length ?? 0,
+    e.patch?.text.length ?? 0,
+  ].join(":");
 }
 
 export { store };
