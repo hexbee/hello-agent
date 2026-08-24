@@ -304,7 +304,7 @@ pi 映射要求：
 | 工作区 | `workspace.open`、`workspace.trust.set`、`workspace.close` |
 | 鉴权 / 模型 | `auth.status`、`auth.begin`、`auth.submitKey`、`auth.cancel`、`models.list`、`models.select` |
 | 会话 | `session.list`、`session.open`、`session.new`、`session.fork`、`session.rename`、`session.delete` |
-| Agent | `agent.prompt`、`agent.abort`、`agent.snapshot` |
+| Agent | `agent.prompt`、`agent.abort`、`agent.snapshot`、`agent.rebuild`（§4.5 故障恢复：dispose 后同 cwd 重建并恢复最新可用会话） |
 | 权限 | `approval.resolve` |
 
 ### 6.3 IPC 规则、背压与恢复

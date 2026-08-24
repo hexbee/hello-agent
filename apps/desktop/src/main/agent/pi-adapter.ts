@@ -10,6 +10,7 @@ import {
   type AgentSessionEvent,
   type AgentSessionRuntime,
   type ExtensionFactory,
+  type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type {
@@ -44,10 +45,14 @@ export class PiAdapter {
   /** toolCallIds currently executing (for snapshot previews). */
   private activeTools = new Map<string, { name: string; preview: SafePreview }>();
   private lastError: string | undefined;
+  /** §4.5 watchdog: armed while running, reset on every pi event. */
+  private watchdogTimer: NodeJS.Timeout | undefined;
 
   constructor(
     readonly host: AgentHost,
     readonly permissions: PermissionManager,
+    /** Probe seam: additional inline extensions (e.g. hang injection). */
+    private opts: { extraExtensions?: InlineExtension[] } = {},
   ) {
     this.batcher = new DeltaBatcher((events) => {
       for (const e of events) this.emit(e);
@@ -83,6 +88,7 @@ export class PiAdapter {
       modelRuntime: this.modelRuntime,
       permissionExtension,
       trust: this.host.getTrust(),
+      extraExtensions: this.opts.extraExtensions,
     });
 
     this.runtime = await createAgentSessionRuntime(factory, {
@@ -97,6 +103,7 @@ export class PiAdapter {
 
     this.assistantOrdinal = 0;
     await this.bindCurrentSession();
+    this.disarmWatchdog();
     return { cwd };
   }
 
@@ -125,6 +132,7 @@ export class PiAdapter {
         /* §4.5: every step has a timeout fallback */
       }
     }
+    this.disarmWatchdog();
     this.permissions.cancelAll("runtime dispose");
     this.unsubscribe?.();
     this.unsubscribe = undefined;
@@ -140,6 +148,70 @@ export class PiAdapter {
       }
     }
     this.state = "idle";
+  }
+
+  /**
+   * §4.5 explicit rebuild: dispose the broken runtime, re-check cwd/auth,
+   * recreate bindings and restore the most recent usable JSONL session.
+   */
+  async rebuild(): Promise<{ sessionId: string; restoredSessionId: string | null }> {
+    const cwd = this.host.getCwd();
+    if (!cwd) throw new Error("no_runtime: no workspace");
+    await this.disposeInternal({ abortFirst: true });
+    await this.create(cwd); // re-canonicalizes cwd + re-binds extensions
+    let restored: string | null = null;
+    try {
+      const sessions = (await this.listSessions())
+        .filter((s) => s.file)
+        .sort((a, b) => (b.modified ?? 0) - (a.modified ?? 0));
+      const latest = sessions[0];
+      if (latest?.file) {
+        await this.openSession(latest.file);
+        restored = this.sessionId || null;
+      }
+    } catch {
+      // No restorable session — stay on the fresh session created by create().
+    }
+    return { sessionId: this.sessionId, restoredSessionId: restored };
+  }
+
+  // ── watchdog (§4.5 / ADR: agent stalled → failed + abort) ─────────────────
+
+  private armWatchdog(): void {
+    const ms = this.host.watchdogTimeoutMs;
+    if (!ms || ms <= 0) return;
+    this.disarmWatchdog();
+    this.watchdogTimer = setTimeout(() => void this.onWatchdogFired(), ms);
+  }
+
+  private bumpWatchdog(): void {
+    if (!this.watchdogTimer) return;
+    clearTimeout(this.watchdogTimer);
+    const ms = this.host.watchdogTimeoutMs ?? 0;
+    if (ms > 0) this.watchdogTimer = setTimeout(() => void this.onWatchdogFired(), ms);
+  }
+
+  private disarmWatchdog(): void {
+    if (this.watchdogTimer) {
+      clearTimeout(this.watchdogTimer);
+      this.watchdogTimer = undefined;
+    }
+  }
+
+  private async onWatchdogFired(): Promise<void> {
+    if (this.state !== "running") return;
+    const ms = this.host.watchdogTimeoutMs ?? 0;
+    this.state = "failed";
+    this.lastError = `watchdog: no agent activity for ${ms}ms`;
+    this.emit(
+      this.mk("agent.failed", { kind: "runtime", message: `agent stalled (no activity for ${Math.round(ms / 1000)}s)` }),
+    );
+    this.emit(this.mk("agent.state", { state: "failed" }));
+    try {
+      await withTimeout(this.session?.abort() ?? Promise.resolve(), 3_000);
+    } catch {
+      /* abort timeout — runtime rebuild is the recovery path */
+    }
   }
 
   // ── run ────────────────────────────────────────────────────────────────────
@@ -367,6 +439,8 @@ export class PiAdapter {
   }
 
   private onPiEvent(event: AgentSessionEvent): void {
+    // Any pi activity proves the pipeline is alive.
+    this.bumpWatchdog();
     switch (event.type) {
       case "message_start": {
         const role = (event.message as { role?: string }).role;
@@ -441,11 +515,13 @@ export class PiAdapter {
       case "agent_start": {
         this.state = "running";
         this.lastError = undefined;
+        this.armWatchdog();
         this.emit(this.mk("agent.state", { state: "running" }));
         break;
       }
       case "agent_end":
       case "agent_settled": {
+        this.disarmWatchdog();
         this.state = this.lastError ? "failed" : "idle";
         this.emit(this.mk("agent.state", { state: this.state }));
         break;

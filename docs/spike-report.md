@@ -46,8 +46,8 @@
 | 风险 | 缓解 | 状态 |
 |---|---|---|
 | OOM / 原生崩溃拖垮 Main（窗口同死） | Electron 主进程崩溃即整应用退出是可接受的产品语义（单窗口应用）；崩溃报告留待 §9.2 发布决策 | 记录，不阻塞 |
-| Agent 死循环阻塞 Main 事件循环 | pi 的 LLM/工具 IO 均为异步；未观测到同步阻塞。实施期加 watchdog（agent_settled 心跳超时 → failed 态） | 待实施 |
-| 卡死量化 | Spike 以探针覆盖异常路径；真实"卡死"注入（如阻塞工具）未做 | **ADR 冻结前建议补一个阻塞工具的卡死注入测试** |
+| Agent 死循环阻塞 Main 事件循环 | pi 的 LLM/工具 IO 均为异步；未观测到同步阻塞。实施期加 watchdog（agent_settled 心跳超时 → failed 态） | **已实施**：PiAdapter 内置 watchdog（默认 180s，host.watchdogTimeoutMs 可配），任意 pi 事件重置；超时 → `agent.failed(runtime)` + abort。卡死注入测试见 `pnpm probe:watchdog`（9/9） |
+| 卡死量化 | Spike 以探针覆盖异常路径；真实"卡死"注入（如阻塞工具）未做 | **已关闭**：`probe:watchdog` 用永不返回的 tool_call handler 真实注入卡死，验证 watchdog 触发与 rebuild 恢复 |
 
 ### 触发重新评估的条件
 
@@ -59,9 +59,9 @@
 
 1. ~~真实 LLM 端到端~~ **已完成**：DeepSeek provider（deepseek-v4-flash/pro）验证通过，环境变量鉴权由 pi 原生解析。附带修复：`safePreview` 的 allowlist 序列化原先把工具结果嵌套结构剥空，现改为顶层 allowlist + 嵌套截断透传。
 2. **§10.9 打包**：electron-builder 配置、ASAR 规则（pi external unpack）、签名与 notarization。
-3. **卡死注入测试**（见 ADR 表格第三行）。
+3. ~~卡死注入测试~~ **已完成**：`pnpm probe:watchdog` —— bash tool_call 被挂起扩展拦截后事件流静默，watchdog 在窗口期后发出 `agent.failed(runtime)` 并 abort；释放后 `rebuild()` 重建 runtime、重新绑定扩展、恢复会话（9/9）。
 4. **审计 SQLite 化**：当前 JSONL 审计文件满足 §7.2 最小闭环；schema 归入 §1.2 未决项。
-5. CredentialStore 持久化（Keychain）——文档 §8 已明确为后续独立功能。
+5. CredentialStore 持久化（Keychain）—— **已完成**：SafeStorageCredentialStore（§8），`pnpm probe:auth` 验证加密落盘与 ModelRuntime 解析。
 
 ## 5. 构建决策记录（§9.2 要求开工前确定）
 

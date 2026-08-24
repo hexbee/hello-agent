@@ -38,4 +38,6 @@ Renderer：`react@19.2.8` · `tailwindcss@4.3.3` · `markstream-react@2.0.3`（b
 - ✅ 可恢复删除：会话删除走系统废纸篓（仅限应用自有目录）
 - ✅ 鉴权流程（§8）：SafeStorage CredentialStore（Keychain/DPAPI）+ API key 提交验证 +
   provider 列表与凭据状态 UI；`pnpm probe:auth` 验证加密落盘与 ModelRuntime 解析
-- ⏳ 待办：OAuth 流程、审计查看界面、打包签名（§10.9）、重建 runtime 按钮 + watchdog
+- ✅ 错误恢复闭环（§4.5）：PiAdapter 内置 watchdog（卡死 → failed + abort）、
+  `agent.rebuild` 命令与 UI 恢复栏（重建 + 会话恢复）；`pnpm probe:watchdog` 卡死注入 9/9
+- ⏳ 待办：OAuth 流程、审计查看界面、打包签名（§10.9）

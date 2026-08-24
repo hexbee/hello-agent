@@ -35,6 +35,17 @@ export function App() {
           <SessionSidebar />
           <div className="flex min-w-0 flex-1 flex-col">
             <TopBar />
+            {s.agentState === "failed" && (
+              <div className="flex items-center justify-between border-b border-danger/30 bg-danger/10 px-4 py-1.5 text-xs text-danger">
+                <span>Agent 异常停止，输入已停用</span>
+                <button
+                  className="cursor-pointer rounded border border-danger/40 px-2 py-0.5 hover:bg-danger/20"
+                  onClick={() => void store.rebuild()}
+                >
+                  重建 Runtime
+                </button>
+              </div>
+            )}
             <ChatView />
           </div>
         </div>

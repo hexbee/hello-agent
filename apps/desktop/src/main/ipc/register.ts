@@ -254,6 +254,19 @@ export function registerIpc(opts: {
     });
   });
 
+  // §4.5 explicit recovery: dispose broken runtime, same-cwd rebuild, restore
+  // latest usable session. Never auto-triggered by Renderer.
+  ipcMain.handle("agent.rebuild", async (event) => {
+    return wrap(async () => {
+      if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
+      requireTrusted("restricted");
+      const a = opts.getAdapter();
+      if (!a) return fail("no_runtime", "no workspace open");
+      const r = await a.rebuild();
+      return ok(r);
+    });
+  });
+
   ipcMain.handle("agent.snapshot", async (event) => {
     return wrap(async () => {
       if (!isPrimaryWindow(event)) return fail("denied", "bad sender");

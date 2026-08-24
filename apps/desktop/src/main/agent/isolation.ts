@@ -39,6 +39,8 @@ export function makeServicesFactory(opts: {
   /** Named inline extension — shows as <inline:permission-manager>. §4.3 */
   permissionExtension: InlineExtension;
   trust: TrustLevel;
+  /** Probe seam only (e.g. watchdog hang injection); never used by the app. */
+  extraExtensions?: InlineExtension[];
 }): CreateAgentSessionRuntimeFactory {
   return async ({ cwd, sessionManager, sessionStartEvent }) => {
     const services = await createAgentSessionServices({
@@ -52,7 +54,7 @@ export function makeServicesFactory(opts: {
         noPromptTemplates: true,
         noThemes: true,
         noContextFiles: true,
-        extensionFactories: [opts.permissionExtension],
+        extensionFactories: [opts.permissionExtension, ...(opts.extraExtensions ?? [])],
       },
     });
 

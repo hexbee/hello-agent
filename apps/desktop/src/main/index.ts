@@ -142,6 +142,8 @@ app.whenReady().then(async () => {
   const host = makeHost();
   host.credentials = credentialStore;
   host.credentialMeta = (providerId) => credentialStore.describe(providerId);
+  // §4.5 watchdog — ADR mitigation: stalled agent → failed + abort.
+  host.watchdogTimeoutMs = 180_000;
   const auditSink = createAuditSink(host.paths.auditFile);
   const permissions = new PermissionManager({
     getTrust: () => workspace.trust,

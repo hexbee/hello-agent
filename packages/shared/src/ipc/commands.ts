@@ -104,6 +104,12 @@ export type AgentAbortResult = { aborted: true };
 
 export type AgentSnapshotResult = AgentSnapshot;
 
+/** §4.5 explicit runtime rebuild (dispose → same-cwd recreate → restore latest session). */
+export interface AgentRebuildResult {
+  rebuilt: true;
+  restoredSessionId: string | null;
+}
+
 // ── permissions ──────────────────────────────────────────────────────────────
 
 export interface ApprovalResolveRequest {

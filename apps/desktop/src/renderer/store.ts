@@ -380,6 +380,21 @@ class Store {
     }
   }
 
+  /** §4.5 — user-triggered runtime rebuild after a failure. */
+  async rebuild(): Promise<void> {
+    this.set({ agentState: "idle" });
+    try {
+      unwrap(await api().agent.rebuild());
+      this.seqStarted = false;
+      this.lastSequence = 0;
+      await this.refreshSnapshot();
+      await this.refreshSessions();
+      this.set({ banner: { kind: "info", text: "Runtime 已重建" } });
+    } catch (e) {
+      this.set({ banner: { kind: "error", text: `重建失败：${String(e)}` }, agentState: "failed" });
+    }
+  }
+
   async resolveApproval(requestId: string, decision: "allow" | "deny"): Promise<void> {
     const sessionId = this.state.session?.id ?? "";
     try {

@@ -31,6 +31,8 @@ export interface AgentHost {
   credentials?: PiCredentialStore;
   /** Non-secret credential metadata for UI status (never key material). */
   credentialMeta?(providerId: string): { type: string; maskedHint: string | null } | undefined;
+  /** §4.5 watchdog: no pi activity for this long while running → failed + abort. */
+  watchdogTimeoutMs?: number;
   /** Recoverable delete (§1.3): move to OS trash. Electron impl uses shell.trashItem. */
   moveToTrash(path: string): Promise<boolean>;
   moveToTrash(path: string): Promise<boolean>;

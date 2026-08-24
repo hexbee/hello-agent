@@ -3,6 +3,7 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  AgentRebuildResult,
   AgentSnapshot,
   ApprovalResolveRequest,
   AuthBeginRequest,
@@ -37,6 +38,7 @@ const INVOKE_COMMANDS = new Set<Channel>([
   "agent.prompt",
   "agent.abort",
   "agent.snapshot",
+  "agent.rebuild",
   "approval.resolve",
 ]);
 
@@ -86,6 +88,7 @@ const api = {
       invoke("agent.prompt", { text }),
     abort: (): Promise<Result<{ aborted: true }>> => invoke("agent.abort"),
     snapshot: (): Promise<Result<AgentSnapshot>> => invoke("agent.snapshot"),
+    rebuild: (): Promise<Result<AgentRebuildResult>> => invoke("agent.rebuild"),
   },
   approvals: {
     resolve: (
