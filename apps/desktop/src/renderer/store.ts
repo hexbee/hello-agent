@@ -175,9 +175,10 @@ class Store {
   async refreshSessions(): Promise<void> {
     try {
       const sessions = unwrap(await api().session.list());
+      console.log("[sessions] 刷新:", sessions.length, "个", sessions.map((s) => s.name ?? s.file.split("/").pop()));
       this.set({ sessions });
-    } catch {
-      /* no runtime yet */
+    } catch (e) {
+      console.warn("[sessions] 刷新失败:", e);
     }
   }
 
@@ -232,7 +233,12 @@ class Store {
     if (typeof e.sequence === "number") {
       if (this.seqStarted && e.sequence > this.lastSequence + 1) {
         this.lastSequence = e.sequence;
+        // 流式期间 delta 走批处理器、非 delta 直接透传，乱序在这里是常态。
+        // 丢弃乱序事件后用快照恢复，但快照不含会话列表，需一并刷新，
+        // 否则新会话要等到下次切换会话才会出现在侧边栏。
+        console.log("[events] 序列间隙，丢弃并恢复:", e.type, e.sequence);
         void this.refreshSnapshot().catch(() => undefined);
+        void this.refreshSessions().catch(() => undefined);
         return;
       }
       this.lastSequence = e.sequence;
@@ -311,10 +317,24 @@ class Store {
       }
       case "agent.state": {
         this.set({ agentState: e.state });
+        // pi 的会话文件是懒落盘的：首条 assistant 消息到达时才写入 .jsonl。
+        // 一轮对话结束（idle/failed）后文件已存在，此时刷新侧边栏，
+        // 否则新会话要等到下次切换会话才会出现在列表里。
+        if (e.state === "idle" || e.state === "failed") {
+          void this.refreshSessions().catch(() => undefined);
+        }
         break;
       }
       case "agent.failed": {
         this.set({ banner: { kind: "error", text: `${e.kind}: ${e.message}` } });
+        break;
+      }
+      case "session.renamed": {
+        // 自动起标题 / 手动改名后同步侧边栏（新标题已持久化到 session_info）。
+        if (this.state.session) {
+          this.set({ session: { ...this.state.session, name: e.name } });
+        }
+        void this.refreshSessions().catch(() => undefined);
         break;
       }
       case "approval.requested": {

@@ -60,9 +60,14 @@ function createWindow(): void {
   });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
-  if (process.env.VITE_DEV_SERVER_URL) {
-    void win.loadURL(process.env.VITE_DEV_SERVER_URL);
+  // electron-vite 5 注入的是 ELECTRON_RENDERER_URL（不是 VITE_DEV_SERVER_URL）。
+  // 变量名写错会静默回退到 out/renderer 旧构建 —— 曾导致 renderer 修复长期不生效。
+  const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    console.log("[boot] renderer 来源: dev server", devServerUrl);
+    void win.loadURL(devServerUrl);
   } else {
+    console.log("[boot] renderer 来源: out/renderer/index.html (file build) —— dev server 未启动？renderer 可能是旧代码！");
     void win.loadFile(join(__dirname, "../renderer/index.html"));
   }
 

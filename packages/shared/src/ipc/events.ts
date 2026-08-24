@@ -51,7 +51,8 @@ export type AgentEvent =
       type: "approval.resolved";
       requestId: string;
       decision: "allow" | "deny" | "cancelled" | "expired";
-    });
+    })
+  | (EventBase & { type: "session.renamed"; name: string });
 
 /** Non-delta events pass through immediately; deltas go through the bounded batcher (§6.3). */
 export function isDeltaEvent(event: AgentEvent): boolean {

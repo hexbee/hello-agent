@@ -12,7 +12,7 @@ import {
   type ExtensionFactory,
   type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Context, Model } from "@earendil-works/pi-ai";
 import type {
   AgentEvent,
   AgentSnapshot,
@@ -37,6 +37,9 @@ export class PiAdapter {
   private session: AgentSession | undefined;
   private unsubscribe: (() => void) | undefined;
   private modelRuntime: ModelRuntime | undefined;
+  /** create() 时锁定的 canonical cwd；SessionManager.list 的 cwd 过滤是纯字符串比较，
+   * 必须与写入 session header 的值逐字一致（pi 的 resolvePath 不做 realpath）。 */
+  private canonicalCwd: string | undefined;
   private batcher: DeltaBatcher;
   private sequence = 0;
   private state: AgentState = "idle";
@@ -44,6 +47,8 @@ export class PiAdapter {
   private activeMessageId: string | undefined;
   /** toolCallIds currently executing (for snapshot previews). */
   private activeTools = new Map<string, { name: string; preview: SafePreview }>();
+  /** SessionIds whose auto-title was already attempted (success or not). */
+  private titleAttempted = new Set<string>();
   private lastError: string | undefined;
   /** §4.5 watchdog: armed while running, reset on every pi event. */
   private watchdogTimer: NodeJS.Timeout | undefined;
@@ -68,6 +73,7 @@ export class PiAdapter {
   async create(cwdInput: string): Promise<{ cwd: string }> {
     const cwd = canonicalize(cwdInput);
     if (!cwd) throw new Error(`cannot canonicalize cwd: ${cwdInput}`);
+    this.canonicalCwd = cwd;
 
     await this.disposeInternal({ abortFirst: false });
 
@@ -252,7 +258,9 @@ export class PiAdapter {
   // ── sessions ───────────────────────────────────────────────────────────────
 
   async listSessions(): Promise<Array<{ file: string; name?: string; modified?: number }>> {
-    const cwd = this.host.getCwd();
+    // 用 create() 时锁定的 canonical cwd，而不是 host.getCwd() 的即时值：
+    // 若两者字符串不一致，pi 会按 cwd 过滤掉全部会话。
+    const cwd = this.canonicalCwd ?? canonicalize(this.host.getCwd());
     if (!cwd) return [];
     const infos = await SessionManager.list(cwd, this.host.paths.sessionsDir);
     return infos.map((i) => ({
@@ -283,7 +291,50 @@ export class PiAdapter {
   }
 
   renameSession(name: string): void {
-    this.requireSession().setSessionName(name);
+    const session = this.requireSession();
+    session.setSessionName(name);
+    this.emit(this.mk("session.renamed", { name: session.sessionName ?? name }));
+  }
+
+  /**
+   * 首轮对话结束后，用当前会话的模型为会话生成一个短标题并持久化
+   * （appendSessionInfo 条目）。只对未命名且从未尝试过的会话执行一次；
+   * 失败静默，手动改名仍可用。
+   */
+  private async autoTitleSession(): Promise<void> {
+    const session = this.session;
+    const rt = this.modelRuntime;
+    if (!session || !rt) return;
+    if (session.sessionName || this.titleAttempted.has(session.sessionId)) return;
+    const users = session.getUserMessagesForForking();
+    const first = users[0]?.text?.trim();
+    if (!first || users.length === 0) return; // 没有用户消息就没有可总结的内容
+    this.titleAttempted.add(session.sessionId);
+    try {
+      const model = session.model ?? rt.getAvailableSnapshot()[0];
+      if (!model) return;
+      const prompt =
+        `为下面的用户请求起一个简短的中文标题（不超过16个字），` +
+        `直接输出标题本身，不要引号、句号或任何其他文字：\n\n${first.slice(0, 800)}`;
+      const res = await withTimeout(
+        rt.completeSimple(model, {
+          messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
+        } satisfies Context),
+        20_000,
+      );
+      // 仍绑定同一会话才写入，避免竞态下改错会话
+      if (this.session !== session) return;
+      const title = extractText(res)
+        .split("\n")[0]!
+        .replace(/^[\s"'“”「」]+|[\s"'“”「」。]+$/g, "")
+        .slice(0, 40)
+        .trim();
+      if (!title) return;
+      session.setSessionName(title);
+      this.emit(this.mk("session.renamed", { name: title }));
+    } catch {
+      /* 起标题是尽力而为：失败不影响主流程 */
+    }
   }
 
   async deleteSession(pathInput: string): Promise<void> {
@@ -524,6 +575,8 @@ export class PiAdapter {
         this.disarmWatchdog();
         this.state = this.lastError ? "failed" : "idle";
         this.emit(this.mk("agent.state", { state: this.state }));
+        // 首轮对话结束后自动起标题（pi 不落盘无名会话，此时文件已写入）。
+        void this.autoTitleSession();
         break;
       }
       case "auto_retry_start": {
