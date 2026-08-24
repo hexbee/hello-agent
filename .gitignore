@@ -27,6 +27,9 @@ out/
 *.log
 .DS_Store
 
+# Playwright MCP test artifacts (snapshots / screenshots / console logs)
+.playwright-mcp/
+
 # Spike artifacts
 spikes/out/
 **/userData-spike/
