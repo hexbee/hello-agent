@@ -7,15 +7,18 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dist": "electron-vite build && electron-builder --dir"
   },
   "devDependencies": {
+    "@hello-agent/shared": "workspace:*",
     "@tailwindcss/vite": "4.3.3",
     "@types/node": "^24.0.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
     "@vitejs/plugin-react": "5.1.4",
     "electron": "43.4.1",
+    "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
     "tailwindcss": "4.3.3",
     "tsx": "4.20.6",
@@ -25,7 +28,6 @@
   "dependencies": {
     "@earendil-works/pi-ai": "0.84.2",
     "@earendil-works/pi-coding-agent": "0.84.2",
-    "@hello-agent/shared": "workspace:*",
     "markstream-react": "2.0.3",
     "react": "19.2.8",
     "react-dom": "19.2.8"

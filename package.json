@@ -20,7 +20,8 @@
     "probe:auth": "bash spikes/probes/auth-smoke.sh",
     "probe:watchdog": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/watchdog-probe.ts",
     "probe:e2e-llm": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/e2e-llm-probe.ts",
-    "probe:all": "pnpm probe:isolation && pnpm probe:permission && pnpm probe:session-rebind && pnpm probe:dispose-rebuild && pnpm probe:delta-stress && pnpm probe:sandbox && pnpm probe:e2e-llm && pnpm probe:watchdog"
+    "probe:all": "pnpm probe:isolation && pnpm probe:permission && pnpm probe:session-rebind && pnpm probe:dispose-rebuild && pnpm probe:delta-stress && pnpm probe:sandbox && pnpm probe:e2e-llm && pnpm probe:watchdog",
+    "probe:package": "bash spikes/probes/package-probe.sh"
   },
   "packageManager": "pnpm@11.21.0"
 }

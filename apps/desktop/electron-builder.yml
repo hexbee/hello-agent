@@ -1,0 +1,41 @@
+# §9.2 / §10.9 packaging config.
+#
+# Signing status: NO Apple developer certificate — mac builds are unsigned
+# (identity: null). Gatekeeper will require right-click → Open on first run.
+# When a certificate is available, add: hardenedRuntime, entitlements,
+# notarize (teamId), and zip/dmg targets.
+appId: dev.helloagent.desktop
+productName: hello-agent
+
+directories:
+  output: release/${version}
+
+files:
+  - out/**
+  - package.json
+  # Everything else (src, configs) is excluded by default; production deps are
+  # collected automatically. @hello-agent/shared is a devDependency (bundled at
+  # build time) so it is not shipped.
+
+asar: true
+# pi loads assets via real file paths (e.g. photon-node's wasm through
+# fs.readFileSync(__dirname)); keep the whole pi dependency subtree unpacked.
+asarUnpack:
+  - "**/node_modules/@earendil-works/**"
+  - "**/node_modules/@silvia-odwyer/**"
+
+compression: normal
+
+mac:
+  identity: null # unsigned until a developer certificate is provisioned
+  category: public.app-category.developer-tools
+  target:
+    - target: dir
+      arch:
+        - arm64
+
+linux:
+  target: dir
+
+win:
+  target: dir

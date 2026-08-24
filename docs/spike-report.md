@@ -16,7 +16,7 @@
 | 6 | Renderer 只能访问 preload 白名单 | ✅ | sandbox-probe：主世界无 require/process/ipcRenderer，bridge 无泛型 invoke/send |
 | 7 | Trust matrix 自动化测试 | ✅（部分） | permission-probe 覆盖 untrusted/restricted/trusted 决策矩阵；项目 extensions/skills 不自动执行由 isolation-probe bait 注入证明 |
 | 8 | 文件系统探测隔离断言 | ✅ | isolation-probe：`.pi/extensions` 恶意扩展未执行、`~/.pi/**` 与 `~/.agents/**` 零触碰、trust.json 未写、会话落 app 目录、project_trust 返回 no/false |
-| 9 | 含 pi 的打包产物可启动 | ⚠️ 部分 | electron-vite 产物（pi external）已可启动并完成 §10.6 探针；ASAR 打包/签名/notarization 未做 |
+| 9 | 含 pi 的打包产物可启动 | ✅（无签名） | `pnpm probe:package`：electron-builder dir 产物（mac-arm64，ASAR + pi 子树 unpack）内验证 renderer sandbox + 凭据库/runtime/会话持久化/model 目录（11/11）；签名与 notarization 待开发者证书 |
 | + | 真实 LLM 端到端（DeepSeek） | ✅ | e2e-llm-probe：真实流式 delta（含 thinking）、read 工具自动放行、bash 审批 allow 后执行成功、deny 被 block、会话落 app 目录（14/14；`DEEPSEEK_API_KEY=... pnpm probe:e2e-llm`，无 key 自动 SKIP） |
 
 运行方式：`pnpm probe:all`（共 52+5 项检查，全部 PASS）。
@@ -58,7 +58,7 @@
 ## 4. 遗留事项（进入实施前必须关闭）
 
 1. ~~真实 LLM 端到端~~ **已完成**：DeepSeek provider（deepseek-v4-flash/pro）验证通过，环境变量鉴权由 pi 原生解析。附带修复：`safePreview` 的 allowlist 序列化原先把工具结果嵌套结构剥空，现改为顶层 allowlist + 嵌套截断透传。
-2. **§10.9 打包**：electron-builder 配置、ASAR 规则（pi external unpack）、签名与 notarization。
+2. ~~§10.9 打包~~ **基本完成**：electron-builder 26 + ASAR 规则（pi 子树 asarUnpack，规避 photon wasm 路径读取）；`pnpm probe:package` 在真实 .app 内跑 sandbox + agent 栈冒烟（11/11）。macOS 签名/notarization、zip/dmg 目标、Windows/Linux 实机验证待证书与硬件。
 3. ~~卡死注入测试~~ **已完成**：`pnpm probe:watchdog` —— bash tool_call 被挂起扩展拦截后事件流静默，watchdog 在窗口期后发出 `agent.failed(runtime)` 并 abort；释放后 `rebuild()` 重建 runtime、重新绑定扩展、恢复会话（9/9）。
 4. **审计 SQLite 化**：当前 JSONL 审计文件满足 §7.2 最小闭环；schema 归入 §1.2 未决项。
 5. CredentialStore 持久化（Keychain）—— **已完成**：SafeStorageCredentialStore（§8），`pnpm probe:auth` 验证加密落盘与 ModelRuntime 解析。

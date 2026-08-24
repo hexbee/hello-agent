@@ -30,3 +30,4 @@ out/
 # Spike artifacts
 spikes/out/
 **/userData-spike/
+release/

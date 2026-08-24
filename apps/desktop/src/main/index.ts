@@ -3,7 +3,8 @@
 
 import { app, BrowserWindow, shell } from "electron";
 import { join } from "node:path";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { PermissionManager, createAuditSink } from "./agent/permission-manager.js";
 import { PiAdapter } from "./agent/pi-adapter.js";
 import { canonicalize, type AgentHost, type AgentHostPaths } from "./agent/host.js";
@@ -137,6 +138,13 @@ function makeHost(): AgentHost {
 }
 
 app.whenReady().then(async () => {
+  // §10.9 deep probe inside the PACKAGED product (asar/unpack context):
+  // credential store roundtrip + runtime creation + session persistence.
+  if (process.env.SPIKE_PKG_PROBE && process.env.SPIKE_PROBE_OUT) {
+    void runPackagedProbe();
+    return;
+  }
+
   // §8 — app-owned credential store; raw keys never leave Main.
   const credentialStore = new SafeStorageCredentialStore(join(dataDir(), "credentials.json"));
   const host = makeHost();
@@ -193,6 +201,64 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+
+/** §10.9 — packaged-product deep probe: run the full agent stack inside the
+ * asar/unpack context, write JSON results to SPIKE_PROBE_OUT, then quit. */
+async function runPackagedProbe(): Promise<void> {
+  const out = process.env.SPIKE_PROBE_OUT!;
+  const result: Record<string, unknown> = {};
+  let adapter: PiAdapter | undefined;
+  try {
+    // 1. Credential store roundtrip via safeStorage.
+    const paths = hostPaths();
+    const credFile = join(paths.agentDir, "credentials.json");
+    const store = new SafeStorageCredentialStore(credFile);
+    const key = "sk-pkg-probe-0000000000001234";
+    await store.modify("deepseek", async () => ({ type: "api_key" as const, key }));
+    result.credentialStored = store.describe("deepseek") != null;
+    result.credentialEncrypted = !readFileSync(credFile, "utf8").includes(key);
+
+    // 2. Runtime creation with the unpacked pi subtree + session persistence.
+    const cwd = mkdtempSync(join(tmpdir(), "pkg-probe-"));
+    const probeHost: AgentHost = {
+      paths,
+      getCwd: () => cwd,
+      getTrust: () => "trusted",
+      emit: () => {},
+      getEnvKey: () => undefined,
+      credentials: store,
+      credentialMeta: (id) => store.describe(id),
+      moveToTrash: async (p) => shell.trashItem(p).then(() => true).catch(() => false),
+      watchdogTimeoutMs: 60_000,
+    };
+    const permissions = new PermissionManager({
+      getTrust: () => "trusted",
+      getCwd: () => cwd,
+      getSessionId: () => adapter?.sessionId ?? "",
+      ttlMs: 10_000,
+      onApprovalRequested: () => {},
+      onApprovalResolved: () => {},
+      audit: () => {},
+    });
+    adapter = new PiAdapter(probeHost, permissions);
+    await adapter.create(cwd);
+    result.runtimeCreated = !!adapter.sessionId;
+    result.extensionBound = permissions.bindCount >= 1;
+
+    await adapter.newSession();
+    result.sessionPersisted = !!adapter.sessionFilePath();
+
+    const models = await adapter.listModels();
+    result.modelsCatalog = Array.isArray(models) ? models.length : -1;
+  } catch (e) {
+    result.error = String(e);
+  } finally {
+    await adapter?.dispose().catch(() => undefined);
+  }
+  writeFileSync(out, JSON.stringify(result, null, 2));
+  app.quit();
+}
 
 app.on("window-all-closed", async () => {
   // §4.5: abort → cancel approvals → unsubscribe → dispose with timeouts.
