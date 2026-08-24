@@ -8,7 +8,11 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin({ exclude: ["@hello-agent/shared"] })],
     build: {
       lib: {
-        entry: resolve(__dirname, "src/main/index.ts"),
+        entry: {
+          index: resolve(__dirname, "src/main/index.ts"),
+          // §8 smoke probe: AUTH_SMOKE_OUT=... electron ./apps/desktop/out/main/auth-smoke.js
+          "auth-smoke": resolve(__dirname, "src/main/auth-smoke.ts"),
+        },
       },
       rollupOptions: {
         // NOTE: @hello-agent/shared is bundled (its package entry is TS source);

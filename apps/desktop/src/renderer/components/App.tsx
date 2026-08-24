@@ -1,5 +1,5 @@
-import { useStore } from "../store";
-import { store } from "../store";
+import { store, useStore } from "../store";
+import { AuthDialog } from "./AuthDialog";
 import { ChatView } from "./ChatView";
 import { SessionSidebar } from "./SessionSidebar";
 import { TopBar } from "./TopBar";
@@ -39,6 +39,8 @@ export function App() {
           </div>
         </div>
       )}
+
+      <AuthDialog />
     </div>
   );
 }

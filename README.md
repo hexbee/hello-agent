@@ -36,4 +36,6 @@ Renderer：`react@19.2.8` · `tailwindcss@4.3.3` · `markstream-react@2.0.3`（b
 - ✅ Renderer：React 产品界面 —— 工作区 Trust 门控、流式 Markdown 对话、工具卡、
   审批卡、会话列表（新建/打开/重命名/删除到废纸篓/从历史分叉）、模型选择
 - ✅ 可恢复删除：会话删除走系统废纸篓（仅限应用自有目录）
-- ⏳ 待办：auth 流程 UI（当前凭据经环境变量注入）、审计查看界面、打包签名（§10.9）
+- ✅ 鉴权流程（§8）：SafeStorage CredentialStore（Keychain/DPAPI）+ API key 提交验证 +
+  provider 列表与凭据状态 UI；`pnpm probe:auth` 验证加密落盘与 ModelRuntime 解析
+- ⏳ 待办：OAuth 流程、审计查看界面、打包签名（§10.9）、重建 runtime 按钮 + watchdog

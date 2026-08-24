@@ -52,8 +52,10 @@ export type StoreState = {
   models: Array<{ provider: string; id: string; context: number | null }>;
   selectedModel: string | null;
   authState: AgentSnapshot["authState"];
+  authProviders: AgentSnapshot["authProviders"];
   forkCandidates: Array<{ entryId: string; text: string }>;
   banner: { kind: "error" | "info"; text: string } | null;
+  authDialogOpen: boolean;
 };
 
 const initialState: StoreState = {
@@ -68,8 +70,10 @@ const initialState: StoreState = {
   models: [],
   selectedModel: null,
   authState: { configured: false, provider: null, maskedHint: null },
+  authProviders: [],
   forkCandidates: [],
   banner: null,
+  authDialogOpen: false,
 };
 
 class Store {
@@ -209,6 +213,7 @@ class Store {
       models: snap.models,
       selectedModel: snap.selectedModel,
       authState: snap.authState,
+      authProviders: snap.authProviders ?? this.state.authProviders,
       forkCandidates: snap.forkCandidates ?? [],
       trust: snap.trust,
       cwd: snap.cwd || this.state.cwd,
@@ -454,6 +459,27 @@ class Store {
 
   dismissBanner(): void {
     this.set({ banner: null });
+  }
+
+  openAuthDialog(): void {
+    void this.refreshSnapshot().catch(() => undefined);
+    this.set({ authDialogOpen: true, banner: null });
+  }
+
+  closeAuthDialog(): void {
+    this.set({ authDialogOpen: false });
+  }
+
+  /** §8 — submit API key; Main verifies then persists via secure storage. */
+  async submitApiKey(provider: string, apiKey: string): Promise<void> {
+    try {
+      const st = unwrap(await api().auth.submitKey(provider, apiKey));
+      await this.refreshSnapshot();
+      this.set({ authDialogOpen: false, authState: st, banner: { kind: "info", text: `${provider} 凭据已保存到系统安全存储` } });
+    } catch (e) {
+      // Keep dialog open; show error inside it via banner.
+      this.set({ banner: { kind: "error", text: String(e) } });
+    }
   }
 }
 

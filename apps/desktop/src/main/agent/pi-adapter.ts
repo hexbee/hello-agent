@@ -241,6 +241,42 @@ export class PiAdapter {
 
   // ── models & auth ──────────────────────────────────────────────────────────
 
+  /** Provider auth capabilities for the auth dialog. No secrets. */
+  listAuthProviders(): AgentSnapshot["authProviders"] {
+    const rt = this.requireModelRuntime();
+    return rt.getProviders().map((p) => ({
+      id: p.id,
+      name: p.name,
+      supportsApiKey: p.auth?.apiKey != null,
+      supportsOAuth: p.auth?.oauth != null,
+      configured: rt.hasConfiguredAuth(p.id),
+    }));
+  }
+
+  /** §8.2 — store the key, then VERIFY it resolves auth + yields models. */
+  async submitApiKey(providerId: string, apiKey: string): Promise<void> {
+    const rt = this.requireModelRuntime();
+    if (!rt.getProvider(providerId)) throw new Error(`not_found: unknown provider ${providerId}`);
+    await rt.setRuntimeApiKey(providerId, apiKey); // writes through CredentialStore
+    try {
+      const check = await withTimeout(rt.checkAuth(providerId), 10_000);
+      if (!check) throw new Error("auth check failed");
+      const available = await withTimeout(rt.getAvailable(providerId), 15_000);
+      if (available.length === 0) throw new Error("no models available for this key");
+    } catch (e) {
+      // §8.3: invalid key → roll back; never keep a half-configured state.
+      await rt.removeRuntimeApiKey(providerId).catch(() => undefined);
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`auth_required: ${msg}`);
+    }
+  }
+
+  private requireModelRuntime(): ModelRuntime {
+    if (!this.modelRuntime) throw new Error("no_runtime: workspace not open");
+    return this.modelRuntime;
+  }
+
+
   async listModels(): Promise<AgentSnapshot["models"]> {
     if (!this.modelRuntime) throw new Error("no_runtime: workspace not open");
     const available = await this.modelRuntime.getAvailable();
@@ -270,11 +306,14 @@ export class PiAdapter {
       this.modelRuntime!.hasConfiguredAuth(p.id),
     );
     const provider = providers[0]?.id ?? null;
-    return {
-      configured: providers.length > 0,
-      provider,
-      maskedHint: provider ? maskKey(this.host.getEnvKey(provider)) : null,
-    };
+    if (!provider) {
+      return { configured: false, provider: null, maskedHint: null };
+    }
+    // Persisted credential hint first; env key as dev fallback. Never raw keys.
+    const meta = this.host.credentialMeta?.(provider);
+    const maskedHint =
+      meta?.maskedHint ?? maskKey(this.host.getEnvKey(provider));
+    return { configured: true, provider, maskedHint };
   }
 
   // ── dev-only stress hook (real emit path, no LLM) ──────────────────────────
@@ -483,6 +522,7 @@ export class PiAdapter {
             text: u.text.length > 200 ? `${u.text.slice(0, 200)}…` : u.text,
           }))
         : [],
+      authProviders: this.listAuthProviders(),
     };
   }
 

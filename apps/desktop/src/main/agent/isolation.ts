@@ -13,16 +13,20 @@ import {
   type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import type { CredentialStore as PiCredentialStore } from "@earendil-works/pi-ai";
 import type { AgentHostPaths, TrustLevel } from "./host.js";
 import { RESTRICTED_TOOL_ALLOWLIST } from "./permission-manager.js";
 
 const TRUSTED_TOOLS = ["read", "edit", "write", "bash", "grep", "find", "ls"];
 
-export function createIsolatedModelRuntime(paths: AgentHostPaths): Promise<ModelRuntime> {
-  // §4.4: no authPath → no ~/.pi/agent/auth.json; credentials stay in-memory
-  // for the spike (Keychain-backed CredentialStore is a post-spike item).
+export function createIsolatedModelRuntime(
+  paths: AgentHostPaths,
+  credentials?: PiCredentialStore,
+): Promise<ModelRuntime> {
+  // §4.4: no authPath → no ~/.pi/agent/auth.json. §8: credentials go through
+  // the app-owned store (safeStorage-backed in Electron; in-memory in probes).
   return ModelRuntime.create({
-    credentials: new InMemoryCredentialStore(),
+    credentials: credentials ?? new InMemoryCredentialStore(),
     modelsPath: paths.modelsPath,
     modelsStorePath: paths.modelsStorePath,
     allowModelNetwork: false,

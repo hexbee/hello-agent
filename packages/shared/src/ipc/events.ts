@@ -88,7 +88,17 @@ export type AgentSnapshot = {
     provider: string | null;
     /** Masked hint only, never credentials. e.g. "sk-…abcd" */
     maskedHint: string | null;
+    /** Set when secure storage itself failed (§8 error states). */
+    storageError?: string;
   };
+  /** Provider auth capabilities for the auth dialog (no secrets). */
+  authProviders: Array<{
+    id: string;
+    name: string;
+    supportsApiKey: boolean;
+    supportsOAuth: boolean;
+    configured: boolean;
+  }>;
   models: Array<{ provider: string; id: string; context: number | null }>;
   selectedModel: string | null;
   /** User messages with real JSONL entry ids — fork selector source (§5.1 session.fork). */

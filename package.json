@@ -17,6 +17,7 @@
     "probe:dispose-rebuild": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/dispose-rebuild-probe.ts",
     "probe:delta-stress": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/delta-stress-probe.ts",
     "probe:sandbox": "bash spikes/probes/sandbox-probe.sh",
+    "probe:auth": "bash spikes/probes/auth-smoke.sh",
     "probe:e2e-llm": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/e2e-llm-probe.ts",
     "probe:all": "pnpm probe:isolation && pnpm probe:permission && pnpm probe:session-rebind && pnpm probe:dispose-rebuild && pnpm probe:delta-stress && pnpm probe:sandbox && pnpm probe:e2e-llm"
   },

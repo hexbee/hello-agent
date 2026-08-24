@@ -129,7 +129,8 @@ export function registerIpc(opts: {
   ipcMain.handle("auth.begin", async (event, input) => {
     return wrap(async () => {
       if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
-      // Spike: OAuth flow deferred; env keys cover auth needs.
+      // v0.1: OAuth deferred (§1.3 明确不包含); renderer only offers API key.
+      void input;
       return ok({});
     });
   });
@@ -139,9 +140,12 @@ export function registerIpc(opts: {
       if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
       const v = validateAuthSubmitKey(input);
       if (!v.ok) return v;
-      // Spike policy: keys are provided via environment to Main only.
-      // submitKey is accepted but not persisted anywhere readable by Renderer.
-      return ok(await adapter().authState());
+      requireTrusted("restricted");
+      const a = adapter();
+      // §8: verify before accepting; adapter rolls back on failure. The raw
+      // key is never echoed back or logged.
+      await a.submitApiKey(v.data.provider, v.data.apiKey);
+      return ok(await a.authState());
     });
   });
 

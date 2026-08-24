@@ -59,14 +59,20 @@ export function TopBar() {
       </select>
 
       {s.authState.configured ? (
-        <span
-          className="text-xs text-muted"
-          title={`provider: ${s.authState.provider} · ${s.authState.maskedHint ?? ""}`}
+        <button
+          className="cursor-pointer text-xs text-muted hover:text-fg"
+          title={`provider: ${s.authState.provider} · ${s.authState.maskedHint ?? ""}\n点击管理凭据`}
+          onClick={() => store.openAuthDialog()}
         >
-          🔑 {s.authState.provider}
-        </span>
+          🔑 {s.authState.provider} {s.authState.maskedHint ?? ""}
+        </button>
       ) : (
-        <span className="text-xs text-danger">未配置凭据</span>
+        <button
+          className="cursor-pointer rounded-lg bg-accent/20 px-2 py-1 text-xs text-accent hover:bg-accent/30"
+          onClick={() => store.openAuthDialog()}
+        >
+          配置凭据…
+        </button>
       )}
     </div>
   );

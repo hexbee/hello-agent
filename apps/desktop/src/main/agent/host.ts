@@ -3,6 +3,7 @@
 // electron anywhere under src/main/agent/.
 
 import type { AgentEvent, SafePreview } from "@hello-agent/shared";
+import type { CredentialStore as PiCredentialStore } from "@earendil-works/pi-ai";
 
 export type TrustLevel = "untrusted" | "restricted" | "trusted";
 
@@ -26,7 +27,12 @@ export interface AgentHost {
   emit(event: AgentEvent): void;
   /** Masked auth hint source, e.g. env-injected key. Never returns raw keys. */
   getEnvKey(providerId: string): string | undefined;
+  /** App-owned credential store backing ModelRuntime (§8). Probes omit it and use env keys. */
+  credentials?: PiCredentialStore;
+  /** Non-secret credential metadata for UI status (never key material). */
+  credentialMeta?(providerId: string): { type: string; maskedHint: string | null } | undefined;
   /** Recoverable delete (§1.3): move to OS trash. Electron impl uses shell.trashItem. */
+  moveToTrash(path: string): Promise<boolean>;
   moveToTrash(path: string): Promise<boolean>;
 }
 

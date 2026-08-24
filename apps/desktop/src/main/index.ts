@@ -7,6 +7,7 @@ import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { PermissionManager, createAuditSink } from "./agent/permission-manager.js";
 import { PiAdapter } from "./agent/pi-adapter.js";
 import { canonicalize, type AgentHost, type AgentHostPaths } from "./agent/host.js";
+import { SafeStorageCredentialStore } from "./auth/credential-store.js";
 import type { AgentEvent } from "@hello-agent/shared";
 import { registerIpc, type WorkspaceState } from "./ipc/register.js";
 
@@ -136,7 +137,11 @@ function makeHost(): AgentHost {
 }
 
 app.whenReady().then(async () => {
+  // §8 — app-owned credential store; raw keys never leave Main.
+  const credentialStore = new SafeStorageCredentialStore(join(dataDir(), "credentials.json"));
   const host = makeHost();
+  host.credentials = credentialStore;
+  host.credentialMeta = (providerId) => credentialStore.describe(providerId);
   const auditSink = createAuditSink(host.paths.auditFile);
   const permissions = new PermissionManager({
     getTrust: () => workspace.trust,
