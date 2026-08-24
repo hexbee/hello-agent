@@ -6,3 +6,6 @@ allowBuilds:
   '@google/genai': true
   esbuild: true
   protobufjs: true
+minimumReleaseAgeExclude:
+  - markstream-react@2.0.3
+  - '@types/react-dom@19.2.5'

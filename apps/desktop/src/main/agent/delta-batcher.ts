@@ -4,7 +4,7 @@
 // time, so ordering is monotonic and gaps only occur where deltas were dropped
 // wholesale (never reordered).
 
-import type { AgentEvent } from "@spike/shared";
+import type { AgentEvent } from "@hello-agent/shared";
 
 export interface DeltaBatcherOptions {
   /** Max ms between flushes while deltas keep arriving. */

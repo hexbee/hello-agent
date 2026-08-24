@@ -1,0 +1,68 @@
+@import "tailwindcss";
+/* markstream CSS after reset/tailwind, scoped to components layer (install skill: CSS order) */
+@import "markstream-react/index.css" layer(components);
+
+@theme {
+  --color-bg: #0f1115;
+  --color-panel: #161a21;
+  --color-panel-2: #1c212b;
+  --color-border: #2a3140;
+  --color-fg: #e6e9ef;
+  --color-muted: #8b93a5;
+  --color-accent: #5b8def;
+  --color-danger: #e5534b;
+  --color-ok: #57ab5a;
+}
+
+html {
+  color-scheme: dark;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    "PingFang SC",
+    "Helvetica Neue",
+    sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100%;
+}
+
+/* thin scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

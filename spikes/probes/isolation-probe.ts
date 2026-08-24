@@ -5,13 +5,13 @@
 // chain. Asserts none of the bait is read or executed, pi's project trust is
 // bypassed without writing trust.json, and sessions land in the app dir.
 
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PermissionManager, createAuditSink } from "../../apps/desktop/src/main/agent/permission-manager.js";
 import { PiAdapter } from "../../apps/desktop/src/main/agent/pi-adapter.js";
 import type { AgentHost } from "../../apps/desktop/src/main/agent/host.js";
-import type { AgentEvent } from "@spike/shared";
+import type { AgentEvent } from "@hello-agent/shared";
 import { exitOn, Reporter, snapshotTree } from "./harness.js";
 
 const r = new Reporter();
@@ -83,6 +83,7 @@ export default function () {};`,
     getTrust: () => trust,
     emit: (e) => events.push(e),
     getEnvKey: () => undefined,
+    moveToTrash: async (p: string) => { renameSync(p, p + '.trashed'); return true; },
   };
   const auditSink = createAuditSink(paths.auditFile);
   const permissions = new PermissionManager({

@@ -2,6 +2,19 @@
 // and event subscription. No ipcRenderer, no event objects, no generic invoke/send.
 
 import { contextBridge, ipcRenderer } from "electron";
+import type {
+  AgentSnapshot,
+  ApprovalResolveRequest,
+  AuthBeginRequest,
+  AuthSubmitKeyRequest,
+  ModelsSelectRequest,
+  Result,
+  SessionDeleteRequest,
+  SessionForkRequest,
+  SessionOpenRequest,
+  SessionRenameRequest,
+  WorkspaceTrustSetRequest,
+} from "@hello-agent/shared";
 
 type Channel = string;
 
@@ -31,47 +44,56 @@ function invoke<T>(channel: Channel, payload?: unknown): Promise<T> {
   if (!INVOKE_COMMANDS.has(channel)) {
     return Promise.reject(new Error(`preload: channel not allowlisted: ${channel}`));
   }
-  return ipcRenderer.invoke(channel, payload);
+  return ipcRenderer.invoke(channel, payload) as Promise<T>;
 }
 
 const api = {
   workspace: {
-    pickAndOpen: () => invoke("workspace.pickAndOpen"),
-    setTrust: (trust: "restricted" | "trusted") =>
-      invoke("workspace.trust.set", { trust }),
-    close: () => invoke("workspace.close"),
+    pickAndOpen: (): Promise<Result<{ cwd: string; trust: string }>> =>
+      invoke("workspace.pickAndOpen"),
+    setTrust: (trust: WorkspaceTrustSetRequest["trust"]): Promise<Result<{ cwd: string; trust: string }>> =>
+      invoke("workspace.trust.set", { trust } satisfies WorkspaceTrustSetRequest),
+    close: (): Promise<Result<{ closed: true }>> => invoke("workspace.close"),
   },
   auth: {
-    status: () => invoke("auth.status"),
-    begin: (provider: string) => invoke("auth.begin", { provider }),
-    submitKey: (provider: string, apiKey: string) =>
-      invoke("auth.submitKey", { provider, apiKey }),
-    cancel: () => invoke("auth.cancel"),
+    status: (): Promise<Result<AgentSnapshot["authState"]>> => invoke("auth.status"),
+    begin: (provider: string): Promise<Result<{ oauthUrl?: string }>> =>
+      invoke("auth.begin", { provider } satisfies AuthBeginRequest),
+    submitKey: (provider: string, apiKey: string): Promise<Result<AgentSnapshot["authState"]>> =>
+      invoke("auth.submitKey", { provider, apiKey } satisfies AuthSubmitKeyRequest),
+    cancel: (): Promise<Result<{ cancelled: true }>> => invoke("auth.cancel"),
   },
   models: {
-    list: () => invoke("models.list"),
-    select: (ref: string) => invoke("models.select", { ref }),
+    list: (): Promise<Result<AgentSnapshot["models"]>> => invoke("models.list"),
+    select: (ref: string): Promise<Result<{ selected: string | null }>> =>
+      invoke("models.select", { ref } satisfies ModelsSelectRequest),
   },
   session: {
-    list: () => invoke("session.list"),
-    open: (path: string) => invoke("session.open", { path }),
-    create: () => invoke("session.new"),
-    fork: (entryId: string) => invoke("session.fork", { entryId }),
-    rename: (name: string) => invoke("session.rename", { name }),
-    delete: (path: string) => invoke("session.delete", { path }),
+    list: (): Promise<Result<Array<{ file: string; name?: string; modified?: number }>>> =>
+      invoke("session.list"),
+    open: (path: string): Promise<Result<{ sessionId: string }>> =>
+      invoke("session.open", { path } satisfies SessionOpenRequest),
+    create: (): Promise<Result<{ sessionId: string }>> => invoke("session.new"),
+    fork: (entryId: string): Promise<Result<{ sessionId: string }>> =>
+      invoke("session.fork", { entryId } satisfies SessionForkRequest),
+    rename: (name: string): Promise<Result<{ renamed: true }>> =>
+      invoke("session.rename", { name } satisfies SessionRenameRequest),
+    delete: (path: string): Promise<Result<{ deleted: true }>> =>
+      invoke("session.delete", { path } satisfies SessionDeleteRequest),
   },
   agent: {
-    prompt: (text: string) => invoke("agent.prompt", { text }),
-    abort: () => invoke("agent.abort"),
-    snapshot: () => invoke("agent.snapshot"),
+    prompt: (text: string): Promise<Result<{ accepted: boolean }>> =>
+      invoke("agent.prompt", { text }),
+    abort: (): Promise<Result<{ aborted: true }>> => invoke("agent.abort"),
+    snapshot: (): Promise<Result<AgentSnapshot>> => invoke("agent.snapshot"),
   },
   approvals: {
-    resolve: (requestId: string, sessionId: string, decision: "allow" | "deny") =>
-      invoke("approval.resolve", { requestId, sessionId, decision }),
-  },
-  dev: {
-    stressDeltas: (count: number, sizeBytes: number) =>
-      invoke("dev.stressDeltas", { count, sizeBytes }),
+    resolve: (
+      requestId: string,
+      sessionId: string,
+      decision: ApprovalResolveRequest["decision"],
+    ): Promise<Result<{ resolved: true }>> =>
+      invoke("approval.resolve", { requestId, sessionId, decision } satisfies ApprovalResolveRequest),
   },
   events: {
     /** Single subscription point; Renderer never touches raw IPC. */
@@ -83,6 +105,6 @@ const api = {
   },
 };
 
-contextBridge.exposeInMainWorld("spike", api);
+contextBridge.exposeInMainWorld("helloAgent", api);
 
-export type SpikeApi = typeof api;
+export type HelloAgentApi = typeof api;

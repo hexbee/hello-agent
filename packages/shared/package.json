@@ -1,5 +1,5 @@
 {
-  "name": "@spike/shared",
+  "name": "@hello-agent/shared",
   "private": true,
   "version": "0.1.0-spike",
   "type": "module",

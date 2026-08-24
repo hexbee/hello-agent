@@ -1,13 +1,13 @@
 // Electron Main entry — security defaults §3, workspace state machine §4.1,
 // failure/recovery §4.5.
 
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, shell } from "electron";
 import { join } from "node:path";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { PermissionManager, createAuditSink } from "./agent/permission-manager.js";
 import { PiAdapter } from "./agent/pi-adapter.js";
 import { canonicalize, type AgentHost, type AgentHostPaths } from "./agent/host.js";
-import type { AgentEvent } from "@spike/shared";
+import type { AgentEvent } from "@hello-agent/shared";
 import { registerIpc, type WorkspaceState } from "./ipc/register.js";
 
 const SPIKE_DATA_DIR = process.env.SPIKE_DATA_DIR; // probes override this
@@ -76,8 +76,8 @@ function createWindow(): void {
             hasNodeRequire: typeof require !== 'undefined',
             hasProcess: typeof process !== 'undefined',
             hasIpcRenderer: typeof ipcRenderer !== 'undefined',
-            hasSpikeBridge: typeof window.spike === 'object' && window.spike !== null,
-            noGenericInvoke: window.spike.invoke === undefined && window.spike.send === undefined,
+            hasSpikeBridge: typeof window.helloAgent === 'object' && window.helloAgent !== null,
+            noGenericInvoke: window.helloAgent.invoke === undefined && window.helloAgent.send === undefined,
           })`,
         )
         .then((json) => {
@@ -121,6 +121,16 @@ function makeHost(): AgentHost {
         "openrouter": process.env.OPENROUTER_API_KEY,
       };
       return map[provider];
+    },
+    // §1.3 recoverable delete — OS trash, not unlink.
+    moveToTrash: async (p) => {
+      if (!p.startsWith(realpathSync(dataDir()))) return false; // only app-owned files
+      try {
+        await shell.trashItem(p);
+        return true;
+      } catch {
+        return false;
+      }
     },
   };
 }

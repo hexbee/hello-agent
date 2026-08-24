@@ -91,4 +91,6 @@ export type AgentSnapshot = {
   };
   models: Array<{ provider: string; id: string; context: number | null }>;
   selectedModel: string | null;
+  /** User messages with real JSONL entry ids — fork selector source (§5.1 session.fork). */
+  forkCandidates: Array<{ entryId: string; text: string }>;
 };

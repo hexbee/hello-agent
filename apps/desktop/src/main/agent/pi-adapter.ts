@@ -16,7 +16,7 @@ import type {
   AgentEvent,
   AgentSnapshot,
   SafePreview,
-} from "@spike/shared";
+} from "@hello-agent/shared";
 import { realpathSync, statSync } from "node:fs";
 import { basename, isAbsolute, resolve } from "node:path";
 import { DeltaBatcher } from "./delta-batcher.js";
@@ -216,8 +216,12 @@ export class PiAdapter {
 
   async deleteSession(pathInput: string): Promise<void> {
     const real = this.ensureOwnSessionFile(pathInput);
-    const { unlink } = await import("node:fs/promises");
-    await unlink(real); // spike: permanent delete of verified path only
+    // §1.3 可恢复删除: trash first; permanent unlink only if trash fails.
+    const trashed = await this.host.moveToTrash(real).catch(() => false);
+    if (!trashed) {
+      const { unlink } = await import("node:fs/promises");
+      await unlink(real);
+    }
   }
 
   /** §7.2 / §4.1: cancel approvals BEFORE replacing the live session. */
@@ -473,6 +477,12 @@ export class PiAdapter {
         this.session?.model != null
           ? `${this.session.model.provider}/${this.session.model.id}`
           : null,
+      forkCandidates: this.session
+        ? this.session.getUserMessagesForForking().map((u) => ({
+            entryId: u.entryId,
+            text: u.text.length > 200 ? `${u.text.slice(0, 200)}…` : u.text,
+          }))
+        : [],
     };
   }
 

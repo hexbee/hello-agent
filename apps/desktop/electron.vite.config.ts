@@ -1,15 +1,17 @@
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ["@spike/shared"] })],
+    plugins: [externalizeDepsPlugin({ exclude: ["@hello-agent/shared"] })],
     build: {
       lib: {
         entry: resolve(__dirname, "src/main/index.ts"),
       },
       rollupOptions: {
-        // NOTE: @spike/shared is bundled (its package entry is TS source);
+        // NOTE: @hello-agent/shared is bundled (its package entry is TS source);
         // only pi stays external.
         external: ["@earendil-works/pi-coding-agent"],
       },
@@ -33,6 +35,22 @@ export default defineConfig({
     },
   },
   renderer: {
+    plugins: [
+      react(),
+      tailwindcss(),
+      {
+        // §3.3 strict CSP ships in the build; relax connect-src only in the
+        // dev server so Vite HMR websocket can connect.
+        name: "csp-dev-relax",
+        transformIndexHtml(html, ctx) {
+          if (!ctx.server) return html;
+          return html.replace(
+            "connect-src 'none'",
+            "connect-src 'self' ws://localhost:* http://localhost:*",
+          );
+        },
+      },
+    ],
     build: {
       rollupOptions: {
         input: resolve(__dirname, "src/renderer/index.html"),

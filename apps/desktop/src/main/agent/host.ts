@@ -2,7 +2,7 @@
 // Electron Main and in headless probes (spikes/probes/*) without importing
 // electron anywhere under src/main/agent/.
 
-import type { AgentEvent, SafePreview } from "@spike/shared";
+import type { AgentEvent, SafePreview } from "@hello-agent/shared";
 
 export type TrustLevel = "untrusted" | "restricted" | "trusted";
 
@@ -26,6 +26,8 @@ export interface AgentHost {
   emit(event: AgentEvent): void;
   /** Masked auth hint source, e.g. env-injected key. Never returns raw keys. */
   getEnvKey(providerId: string): string | undefined;
+  /** Recoverable delete (§1.3): move to OS trash. Electron impl uses shell.trashItem. */
+  moveToTrash(path: string): Promise<boolean>;
 }
 
 import { realpathSync } from "node:fs";

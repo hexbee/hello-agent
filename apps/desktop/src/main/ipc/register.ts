@@ -14,7 +14,7 @@ import {
   validateAgentPrompt,
   type CommandError,
   type Result,
-} from "@spike/shared";
+} from "@hello-agent/shared";
 import type { PiAdapter } from "../agent/pi-adapter.js";
 import { createAuditSink } from "../agent/permission-manager.js";
 

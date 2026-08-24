@@ -8,7 +8,7 @@ cd "$(dirname "$0")/../.."
 OUT=$(mktemp /tmp/spike-sandbox-XXXX.json)
 trap 'rm -f "$OUT"' EXIT
 
-pnpm --filter @spike/desktop build > /dev/null
+pnpm --filter @hello-agent/desktop build > /dev/null
 
 SPIKE_SANDBOX_PROBE=1 SPIKE_PROBE_OUT="$OUT" \
   ./apps/desktop/node_modules/.bin/electron ./apps/desktop > /dev/null 2>&1 || true

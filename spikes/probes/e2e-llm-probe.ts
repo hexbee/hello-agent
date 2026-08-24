@@ -5,14 +5,14 @@
 // - 只读工具自动放行（read）
 // - bash 触发审批 ask → allow 后执行成功；deny 则被 block
 
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import { PermissionManager } from "../../apps/desktop/src/main/agent/permission-manager.js";
 import { PiAdapter } from "../../apps/desktop/src/main/agent/pi-adapter.js";
 import type { AgentHost } from "../../apps/desktop/src/main/agent/host.js";
-import type { AgentEvent } from "@spike/shared";
+import type { AgentEvent } from "@hello-agent/shared";
 import { exitOn, Reporter } from "./harness.js";
 
 const MODEL = "deepseek/deepseek-v4-flash";
@@ -56,6 +56,7 @@ async function main(): Promise<void> {
     getTrust: () => trust,
     emit: (e) => received.push(e),
     getEnvKey: () => process.env.DEEPSEEK_API_KEY,
+    moveToTrash: async (p: string) => { renameSync(p, p + '.trashed'); return true; },
   };
 
   // 审批策略由测试阶段控制："allow" / "deny"

@@ -2,13 +2,13 @@
 // sequence assignment). Asserts ordering, bounded memory, no unbounded queue.
 // Renderer-side freeze measurement runs in the app (dev.stressDeltas button).
 
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PermissionManager } from "../../apps/desktop/src/main/agent/permission-manager.js";
 import { PiAdapter } from "../../apps/desktop/src/main/agent/pi-adapter.js";
 import type { AgentHost } from "../../apps/desktop/src/main/agent/host.js";
-import type { AgentEvent } from "@spike/shared";
+import type { AgentEvent } from "@hello-agent/shared";
 import { exitOn, Reporter } from "./harness.js";
 
 const r = new Reporter();
@@ -47,6 +47,7 @@ async function main(): Promise<void> {
       }
     },
     getEnvKey: () => undefined,
+    moveToTrash: async (p: string) => { renameSync(p, p + '.trashed'); return true; },
   };
   const permissions = new PermissionManager({
     getTrust: () => "trusted",

@@ -1,14 +1,14 @@
 // §10.3 — newSession / switchSession / fork must rebind the PermissionManager
 // extension on every replacement (§5.2), and sessions must land in app dir.
 
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { PermissionManager, createAuditSink } from "../../apps/desktop/src/main/agent/permission-manager.js";
 import { PiAdapter } from "../../apps/desktop/src/main/agent/pi-adapter.js";
 import type { AgentHost } from "../../apps/desktop/src/main/agent/host.js";
-import type { AgentEvent } from "@spike/shared";
+import type { AgentEvent } from "@hello-agent/shared";
 import { exitOn, Reporter } from "./harness.js";
 
 const r = new Reporter();
@@ -41,6 +41,7 @@ async function main(): Promise<void> {
     getTrust: () => trust,
     emit: (_e: AgentEvent) => {},
     getEnvKey: () => undefined,
+    moveToTrash: async (p: string) => { renameSync(p, p + '.trashed'); return true; },
   };
   const permissions = new PermissionManager({
     getTrust: () => trust,

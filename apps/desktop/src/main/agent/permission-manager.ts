@@ -7,7 +7,7 @@
 import { realpathSync } from "node:fs";
 import { isAbsolute, resolve, sep } from "node:path";
 import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
-import type { SafePreview } from "@spike/shared";
+import type { SafePreview } from "@hello-agent/shared";
 import { safePreview, type TrustLevel } from "./host.js";
 
 export const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"] as const;
