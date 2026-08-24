@@ -9,6 +9,7 @@ import { PermissionManager, createAuditSink } from "./agent/permission-manager.j
 import { PiAdapter } from "./agent/pi-adapter.js";
 import { canonicalize, type AgentHost, type AgentHostPaths } from "./agent/host.js";
 import { SafeStorageCredentialStore } from "./auth/credential-store.js";
+import { TrustStore } from "./trust-store.js";
 import type { AgentEvent } from "@hello-agent/shared";
 import { registerIpc, type WorkspaceState } from "./ipc/register.js";
 
@@ -38,6 +39,8 @@ function hostPaths(): AgentHostPaths {
 let win: BrowserWindow | undefined;
 let adapter: PiAdapter | undefined;
 const workspace: WorkspaceState = { cwd: "", trust: "untrusted" };
+// §4.2 persisted Trust records, keyed by canonical workspace path.
+const trustStore = new TrustStore(join(dataDir(), "trust.json"));
 
 function createWindow(): void {
   win = new BrowserWindow({
@@ -145,6 +148,8 @@ app.whenReady().then(async () => {
     return;
   }
 
+  trustStore.load();
+
   // §8 — app-owned credential store; raw keys never leave Main.
   const credentialStore = new SafeStorageCredentialStore(join(dataDir(), "credentials.json"));
   const host = makeHost();
@@ -176,12 +181,26 @@ app.whenReady().then(async () => {
     getWorkspace: () => workspace,
     setTrust: (t) => {
       workspace.trust = t;
+      if (workspace.cwd) {
+        // §4.2: persist grants; IPC validator only admits restricted/trusted,
+        // but fail-closed in case the surface ever widens.
+        if (t === "untrusted") trustStore.revoke(workspace.cwd);
+        else trustStore.grant(workspace.cwd, t);
+      }
     },
     openWorkspace: async (rawPath) => {
       // §4.1 CanonicalizeCwd: realpath + accessibility; failure → error state.
       const real = canonicalize(rawPath);
       if (!real) throw new Error("invalid_input: cannot canonicalize workspace path");
       workspace.cwd = real;
+      // §4.1 TrustCheck: restore a previously granted level for THIS canonical
+      // path; no record ⇒ untrusted. Always reassign so a prior folder's trust
+      // can never leak into the newly opened one.
+      workspace.trust = trustStore.get(real) ?? "untrusted";
+      // §4.1 TrustCheck passed via a persisted grant ⇒ resume straight into
+      // ConfigureAuth/CreateRuntime. Otherwise the renderer's "enter" path
+      // (snapshot-only) would hit a missing adapter → no_runtime.
+      if (workspace.trust !== "untrusted") await ensureRuntime();
       return real;
     },
     ensureRuntime,
@@ -189,7 +208,7 @@ app.whenReady().then(async () => {
       await adapter?.dispose();
       adapter = undefined;
       workspace.cwd = "";
-      workspace.trust = "untrusted";
+      workspace.trust = "untrusted"; // record stays on disk for next open
     },
     getAdapter: () => adapter,
     auditFile: host.paths.auditFile,

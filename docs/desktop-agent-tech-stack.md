@@ -146,6 +146,8 @@ stateDiagram-v2
 
 信任记录保存于应用设置（key = canonical workspace path），路径不可解析、工作区被移除或用户手动撤销时失效。
 
+> 实现落点：v0.1 将记录存于应用私有 `trust.json`（userData 目录，非 CLI 路径），`TrustStore` 原子写入、损坏时 fail-closed 重置；`workspace.open` 在 canonicalize 后按该路径恢复已授权级别，无记录则为 untrusted，旧目录的信任不会泄漏到新目录。验证见 `pnpm probe:trust-persist`。
+
 | 能力 | Untrusted | Restricted | Trusted |
 |---|---|---|---|
 | 创建 Agent runtime | 否 | 是 | 是 |
