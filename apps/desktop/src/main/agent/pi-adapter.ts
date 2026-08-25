@@ -572,14 +572,17 @@ export class PiAdapter {
         break;
       }
       case "tool_execution_update": {
+        // 与 tool_execution_end 一致：取 text 块纯文本，避免工具卡输出
+        // 显示 {"content":[{"type":"text",...}]} 原始 JSON。
+        const partialText = extractText(event.partialResult);
         this.activeTools.set(event.toolCallId, {
           name: event.toolName,
-          preview: safePreview(event.partialResult),
+          preview: safePreview(partialText),
         });
         this.emit(
           this.mk("tool.updated", {
             toolCallId: event.toolCallId,
-            outputPreview: safePreview(event.partialResult),
+            outputPreview: safePreview(partialText),
           }),
         );
         break;
@@ -592,6 +595,9 @@ export class PiAdapter {
         // 直接 safePreview(result) 会把 {"content":[{"type":"text",...}]}
         // 原样渲染，而切换会话后的快照路径却是纯文本，两边对不上。
         const resultText = extractText(result);
+        // 注意：工具级 isError 不置 lastError——模型会看到错误结果并自行
+        // 恢复（如 edit 的 old_string 不匹配后重试），属正常工作流；若在
+        // 这里置位，agent_settled 会把整轮误判成 failed（「Agent 异常停止」）。
         this.emit(
           this.mk("tool.finished", {
             toolCallId: event.toolCallId,
@@ -600,7 +606,6 @@ export class PiAdapter {
             ...(patchRaw ? { patch: safePreview(patchRaw) } : {}),
           }),
         );
-        if (event.isError) this.lastError = `tool ${event.toolCallId} failed`;
         break;
       }
       case "agent_start": {
@@ -614,13 +619,22 @@ export class PiAdapter {
       case "agent_settled": {
         this.disarmWatchdog();
         this.state = this.lastError ? "failed" : "idle";
+        if (this.lastError) {
+          this.emit(this.mk("agent.failed", { kind: "llm", message: this.lastError }));
+        }
         this.emit(this.mk("agent.state", { state: this.state }));
         // 首轮对话结束后自动起标题（pi 不落盘无名会话，此时文件已写入）。
         void this.autoTitleSession();
         break;
       }
       case "auto_retry_start": {
-        this.emit(this.mk("agent.failed", { kind: "llm", message: "retrying after error" }));
+        // LLM 错误自动重试中：记录错误，重试耗尽后 run 结束时判 failed。
+        this.lastError = event.errorMessage;
+        break;
+      }
+      case "auto_retry_end": {
+        // 重试成功则清除错误，run 正常收尾；失败则保留，settled 时判 failed。
+        if (event.success) this.lastError = undefined;
         break;
       }
       case "compaction_start": {
@@ -647,8 +661,8 @@ export class PiAdapter {
     // message_end 落盘时间，配合 message.timestamp（流开始）可恢复耗时；
     // toolResult 消息也在 entries 里，可重建已完成工具卡。
     const entries = this.session?.sessionManager.getEntries() ?? [];
-    // assistant 消息里发出的 toolCall（id → name/arguments），等 toolResult 来配对。
-    const openCalls = new Map<string, { name: string; arguments: unknown }>();
+    // assistant 消息里发出的 toolCall（id → name/arguments/发出时间），等 toolResult 来配对。
+    const openCalls = new Map<string, { name: string; arguments: unknown; startTs?: number }>();
     for (const entry of entries) {
       if (entry.type !== "message") continue;
       const m = entry.message as {
@@ -664,7 +678,8 @@ export class PiAdapter {
         ordinal++;
         for (const c of (m.content as Array<{ type?: string; id?: string; name?: string; arguments?: unknown }> | undefined) ?? []) {
           if (c.type === "toolCall" && c.id) {
-            openCalls.set(c.id, { name: c.name ?? "", arguments: c.arguments });
+            // 发出时间用 assistant 消息落盘时间（≈ tool calls 发出时刻）。
+            openCalls.set(c.id, { name: c.name ?? "", arguments: c.arguments, startTs: endMs });
           }
         }
         const startMs = m.timestamp;
@@ -710,6 +725,9 @@ export class PiAdapter {
           ...(contentText ? { resultPreview: safePreview(contentText) } : {}),
           isError: Boolean(m.isError),
           timestamp: resultTs ?? (Number.isFinite(endMs) ? endMs : 0),
+          ...(resultTs !== undefined && call?.startTs !== undefined
+            ? { durationSec: Math.max(0, (resultTs - call.startTs) / 1000) }
+            : {}),
         });
       }
     }

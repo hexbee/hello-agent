@@ -88,6 +88,8 @@ export type AgentSnapshot = {
     resultPreview?: SafePreview;
     isError: boolean;
     timestamp: number;
+    /** 工具执行耗时（toolResult 时间 - 发出调用的 assistant 消息落盘时间），供工具卡 meta 显示。 */
+    durationSec?: number;
   }>;
   activeToolPreviews: Array<{ toolCallId: string; toolName: string; preview: SafePreview }>;
   pendingApprovals: Array<{

@@ -1,11 +1,10 @@
 import { memo, useRef, useState, useSyncExternalStore } from "react";
 import Markstream from "markstream-react";
-import {
-  Message,
-  MessageContent,
-  MessageHeader,
-} from "./agents/message";
+import { Message, MessageContent } from "./agents/message";
+import { CodeBlock } from "./agents/code-block";
+import { FileDiff, type FileDiffLine } from "./agents/file-diff";
 import { AgentActivity, type AgentActivityItem } from "./agents/agent-activity";
+import { ThinkingShimmer } from "./agents/loading-states/thinking-shimmer";
 import { ToolResult, ToolResultOutput } from "./agents/tool-result";
 import { MessageScroller } from "./agents/message-scroller";
 import type { ChatEntry, MessageItem, ToolItem } from "../store";
@@ -42,16 +41,25 @@ const MessageView = memo(function MessageView({
   return (
     <Message from={m.role === "user" ? "user" : "assistant"}>
       <MessageContent>
-        {m.role === "assistant" && (
-          <MessageHeader>Assistant</MessageHeader>
-        )}
         {m.role === "user" ? (
           <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-accent-subtle px-4 py-2.5 whitespace-pre-wrap">
             {m.text}
           </div>
         ) : (
           <div className="max-w-full">
-            {m.thinking && <ThinkingActivity m={m} />}
+            {m.thinking ? (
+              <ThinkingActivity m={m} />
+            ) : isStreaming && !m.text ? (
+              // 思考内容尚未到达：先给一行与 AgentActivity working 状态同款的
+              // 「正在思考…」shimmer 提示（agent-activity.md 的加载动效），
+              // 首个 thinking.delta 到达后无缝切换为完整的思考流面板。
+              <div
+                role="status"
+                className="mb-2 flex h-7 min-w-0 items-center text-sm text-muted-foreground"
+              >
+                <ThinkingShimmer>正在思考…</ThinkingShimmer>
+              </div>
+            ) : null}
             {m.text || isStreaming ? (
               <Markstream
                 content={m.text}
@@ -110,25 +118,152 @@ function ThinkingActivity({ m }: { m: MessageItem }) {
   );
 }
 
+// AgentCode 支持的语言有限，按扩展名映射；未知扩展回退 text。
+function languageOf(filename: string): "bash" | "json" | "tsx" | "typescript" | "text" {
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "sh" || ext === "bash" || ext === "zsh") return "bash";
+  if (ext === "json") return "json";
+  if (ext === "tsx" || ext === "jsx") return "tsx";
+  if (ext === "ts" || ext === "js" || ext === "mjs" || ext === "cjs") return "typescript";
+  return "text";
+}
+
+function basename(p: string): string {
+  return p.split("/").pop() || p;
+}
+
+// 解析 unified diff 为 FileDiff 行；跳过 header/hunk 行与结果消息前缀。
+function parseUnifiedDiff(text: string): FileDiffLine[] {
+  const out: FileDiffLine[] = [];
+  let oldNo = 0;
+  let newNo = 0;
+  for (const [i, raw] of text.split("\n").entries()) {
+    if (
+      raw.startsWith("diff ") ||
+      raw.startsWith("index ") ||
+      raw.startsWith("--- ") ||
+      raw.startsWith("+++ ")
+    ) {
+      continue;
+    }
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
+    if (hunk) {
+      oldNo = parseInt(hunk[1]!, 10);
+      newNo = parseInt(hunk[2]!, 10);
+      continue;
+    }
+    if (raw.startsWith("\\ No newline")) continue;
+    const id = `d${i}`;
+    if (raw.startsWith("+")) {
+      out.push({ id, type: "added", newLine: newNo++, content: raw.slice(1) });
+    } else if (raw.startsWith("-")) {
+      out.push({ id, type: "removed", oldLine: oldNo++, content: raw.slice(1) });
+    } else {
+      // 上下文行以空格开头；被截断/空行按上下文处理。
+      out.push({
+        id,
+        type: "context",
+        oldLine: oldNo++,
+        newLine: newNo++,
+        content: raw.startsWith(" ") ? raw.slice(1) : raw,
+      });
+    }
+  }
+  return out;
+}
+
 function ToolCard({ t }: { t: ToolItem }) {
   const running = t.status === "running";
+  const args = toolArgs(t);
+  const path = typeof args?.path === "string" ? args.path : undefined;
+
+  // 编辑类（有 patch）：FileDiff 独立卡片——文件名 + 增删计数 + 折叠 + 复制。
+  if (t.patch?.text && !running && !t.isError) {
+    const filename = path ? basename(path) : undefined;
+    return (
+      <FileDiff
+        file={filename ?? t.toolName}
+        lines={parseUnifiedDiff(t.patch.text)}
+        status="complete"
+        language={filename ? languageOf(filename) : "text"}
+        copyText={t.patch.text}
+        maxHeight={260}
+      />
+    );
+  }
+
+  // 写入类（input 带 content）：CodeBlock 独立卡片——文件名 + 行号 + 高亮。
+  const content = typeof args?.content === "string" ? args.content : undefined;
+  if (content !== undefined && path && !t.isError) {
+    const filename = basename(path);
+    return (
+      <CodeBlock
+        code={content}
+        filename={filename}
+        language={languageOf(filename)}
+        status={running ? "streaming" : "complete"}
+        maxHeight={260}
+      />
+    );
+  }
+
+  // 其余工具：通用 ToolResult 卡片。
   const status = running ? ("running" as const) : t.isError ? (("error" as const)) : ("success" as const);
-  const input = collapse(t.inputPreview?.text ?? "", 60);
-  const output = t.outputPreview?.text ?? "";
-  const result = t.resultPreview?.text ?? "";
+  const output = t.resultPreview?.text || t.outputPreview?.text || "";
+  // 终端类工具把命令本身作为输出首行（$ ls ...），与 beUI 终端示例一致。
+  const command =
+    toolKind(t) === "terminal"
+      ? (typeof args?.command === "string" ? (args.command as string) : undefined)
+      : undefined;
+  const body = [command ? `$ ${command}` : undefined, output]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+  const meta =
+    t.durationSec !== undefined
+      ? `${t.durationSec >= 10 ? Math.round(t.durationSec) : Math.round(t.durationSec * 10) / 10}s`
+      : undefined;
   return (
     <ToolResult
       tool={t.toolName}
-      title={input || t.toolName}
+      title={toolTitle(t)}
       kind={toolKind(t)}
       status={status}
-      copyText={result || output || undefined}
+      meta={meta}
+      copyText={body || undefined}
     >
-      {output && <ToolResultOutput>{output}</ToolResultOutput>}
-      {result && result !== output && <ToolResultOutput>{result}</ToolResultOutput>}
+      {body && <ToolResultOutput>{body}</ToolResultOutput>}
       {t.patch && <ToolResultOutput language="diff">{t.patch.text}</ToolResultOutput>}
     </ToolResult>
   );
+}
+
+// inputPreview 是 allowlist 序列化后的 JSON，解析出参数对象供标题/命令行使用。
+function toolArgs(t: ToolItem): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(t.inputPreview?.text ?? "");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    /* 非 JSON（如纯文本 preview）——回退原文 */
+  }
+  return undefined;
+}
+
+// 工具卡标题：按优先级取主要字段（command/path/pattern…）作为人读标题，
+// 取不到再回退折叠后的原文。
+const TITLE_KEYS = ["command", "path", "file_path", "file", "pattern", "query", "glob", "url"];
+
+function toolTitle(t: ToolItem): string {
+  const args = toolArgs(t);
+  if (args) {
+    for (const k of TITLE_KEYS) {
+      const v = args[k];
+      if (typeof v === "string" && v.trim()) return collapse(v, 80);
+    }
+  }
+  const raw = t.inputPreview?.text ?? "";
+  return collapse(raw, 80) || t.toolName;
 }
 
 // 终端类工具用 terminal 图标，其余走 custom（Wrench）。

@@ -17,6 +17,10 @@ export type ToolItem = {
   patch?: SafePreview;
   isError?: boolean;
   status: "running" | "done";
+  /** 本地流式的开始时间（快照回放的工具卡没有）。 */
+  startedAt?: number;
+  /** 执行耗时秒数，tool.finished 时结算；用于工具卡 meta 显示。 */
+  durationSec?: number;
 };
 
 export type MessageItem = {
@@ -219,6 +223,7 @@ class Store {
           isError: boolean;
           running: boolean;
           timestamp: number;
+          durationSec?: number;
         };
     const snapList: SnapEntry[] = [
       ...snap.messages.map((m) => ({
@@ -239,6 +244,7 @@ class Store {
         isError: t.isError,
         running: false,
         timestamp: t.timestamp,
+        durationSec: t.durationSec,
       })),
       ...snap.activeToolPreviews.map((t, i) => ({
         kind: "tool" as const,
@@ -270,6 +276,7 @@ class Store {
             resultPreview: s.resultPreview,
             isError: s.isError,
             status: s.running ? "running" : "done",
+            durationSec: s.durationSec,
           };
 
     let entries: ChatEntry[];
@@ -457,6 +464,7 @@ class Store {
               toolName: e.toolName,
               inputPreview: e.inputPreview,
               status: "running",
+              startedAt: Date.now(),
             },
           ],
         });
@@ -478,6 +486,11 @@ class Store {
             isError: e.isError,
             resultPreview: e.resultPreview,
             ...(e.patch ? { patch: e.patch } : {}),
+            durationSec:
+              t.durationSec ??
+              (t.startedAt !== undefined
+                ? Math.max(0, (Date.now() - t.startedAt) / 1000)
+                : undefined),
           }),
         );
         break;

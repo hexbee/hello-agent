@@ -33,6 +33,29 @@
   --color-success: var(--color-ok);
 }
 
+/* beUI registry 组件（如 text-shimmer 的渐变文字）直接引用 shadcn 裸变量
+   var(--foreground) / var(--muted-foreground)，而本项目 token 是 Tailwind v4
+   的 --color-* 命名。这里建立别名，var() 惰性求值，明暗切换自动联动。 */
+:root {
+  --background: var(--color-background);
+  --foreground: var(--color-foreground);
+  --card: var(--color-card);
+  --card-foreground: var(--color-card-foreground);
+  --popover: var(--color-popover);
+  --popover-foreground: var(--color-popover-foreground);
+  --primary: var(--color-primary);
+  --primary-foreground: var(--color-primary-foreground);
+  --secondary: var(--color-secondary);
+  --secondary-foreground: var(--color-secondary-foreground);
+  --muted: var(--color-muted);
+  --muted-foreground: var(--color-muted-foreground);
+  --accent: var(--color-accent);
+  --destructive: var(--color-destructive);
+  --destructive-foreground: var(--color-destructive-foreground);
+  --input: var(--color-input);
+  --ring: var(--color-ring);
+}
+
 /* 亮色主题：跟随系统。Tailwind v4 的工具类直接引用 var(--color-*)，
    因此只需在媒体查询里覆盖基础调色板，语义 token（var 映射）自动联动。 */
 @media (prefers-color-scheme: light) {
