@@ -50,7 +50,7 @@ export type AgentEvent =
   | (EventBase & {
       type: "approval.resolved";
       requestId: string;
-      decision: "allow" | "deny" | "cancelled" | "expired";
+      decision: "allow" | "allow-once" | "deny" | "cancelled" | "expired";
     })
   | (EventBase & { type: "session.renamed"; name: string });
 
@@ -75,6 +75,19 @@ export type AgentSnapshot = {
     role: "user" | "assistant";
     text: string;
     thinking?: string;
+    /** 会话落盘耗时（message_end - 流开始），供重启后恢复「思考了 Ns」摘要。 */
+    durationSec?: number;
+    /** 消息流开始时间（ms），用于与 tools 按时间序交错。 */
+    timestamp?: number;
+  }>;
+  /** 已完成的工具调用（从会话文件恢复），按发生顺序。 */
+  tools: Array<{
+    toolCallId: string;
+    toolName: string;
+    inputPreview: SafePreview;
+    resultPreview?: SafePreview;
+    isError: boolean;
+    timestamp: number;
   }>;
   activeToolPreviews: Array<{ toolCallId: string; toolName: string; preview: SafePreview }>;
   pendingApprovals: Array<{

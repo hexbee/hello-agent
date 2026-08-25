@@ -5,6 +5,8 @@ import {
   MessageContent,
   MessageHeader,
 } from "./agents/message";
+import { AgentActivity, type AgentActivityItem } from "./agents/agent-activity";
+import { ToolResult, ToolResultOutput } from "./agents/tool-result";
 import { MessageScroller } from "./agents/message-scroller";
 import type { ChatEntry, MessageItem, ToolItem } from "../store";
 import { store, useStore } from "../store";
@@ -49,15 +51,7 @@ const MessageView = memo(function MessageView({
           </div>
         ) : (
           <div className="max-w-full">
-            {m.thinking && (
-              <details className="mb-2 rounded-lg border border-border bg-panel-2 px-3 py-2">
-                <summary className="cursor-pointer text-xs text-muted select-none">
-                  推理过程
-                  {isStreaming && <span className="ml-2 animate-pulse">…</span>}
-                </summary>
-                <div className="mt-2 text-sm whitespace-pre-wrap text-muted">{m.thinking}</div>
-              </details>
-            )}
+            {m.thinking && <ThinkingActivity m={m} />}
             {m.text || isStreaming ? (
               <Markstream
                 content={m.text}
@@ -77,42 +71,69 @@ const MessageView = memo(function MessageView({
   );
 });
 
-function ToolCard({ t }: { t: ToolItem }) {
-  const running = t.status === "running";
-  const input = t.inputPreview?.text ?? "";
-  const result = t.resultPreview?.text ?? "";
+// beUI AgentActivity（text 模式）：thinking.delta 逐行流入自动跟随的视口，
+// 正文开始输出或消息结束时转为 complete 并折叠成「思考了 Ns」摘要。
+// working 只在「还在流式且正文未开始」时成立，避免正文流式期间推理面板仍显示 shimmer。
+function thinkingItems(thinking: string): AgentActivityItem[] {
+  return thinking
+    .split("\n")
+    .filter(Boolean)
+    .map((line, i) => ({ id: `think-${i}`, type: "text" as const, content: line }));
+}
+
+function ThinkingActivity({ m }: { m: MessageItem }) {
+  const working = m.streaming && !m.text;
+  // 快照 resync 会把 durationSec 抹成 undefined（数据层已回填，这里再兜
+  // 一层）：记住最近一次已知耗时，摘要不回退。
+  const lastDuration = useRef<number | undefined>(undefined);
+  if (m.durationSec !== undefined) lastDuration.current = m.durationSec;
+  const duration = m.durationSec ?? lastDuration.current;
   return (
-    <details className="rounded-lg border border-border bg-panel-2 text-sm" open={running}>
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 select-none">
-        <span
-          className={`inline-block h-2 w-2 shrink-0 rounded-full ${
-            running ? "animate-pulse bg-accent" : t.isError ? "bg-danger" : "bg-ok"
-          }`}
-        />
-        <span className="font-mono text-xs font-medium">{t.toolName}</span>
-        {input && (
-          <span className="truncate font-mono text-xs text-muted">{collapse(input, 120)}</span>
-        )}
-      </summary>
-      <div className="border-t border-border px-3 py-2">
-        {input && <Pre label="输入" text={input} />}
-        {t.outputPreview && <Pre label="输出（进行中）" text={t.outputPreview.text} />}
-        {result && <Pre label="结果" text={result} />}
-        {t.patch && <Pre label="Patch" text={t.patch.text} />}
-      </div>
-    </details>
+    <AgentActivity
+      className="mb-2"
+      contentType="text"
+      status={working ? "working" : "complete"}
+      duration={duration ?? 0}
+      activeLabel="正在思考…"
+      maxHeight={160}
+      summary={
+        duration !== undefined ? (
+          <>
+            思考了 <span className="tabular-nums">{Math.round(duration)}s</span>
+          </>
+        ) : (
+          "推理过程"
+        )
+      }
+      items={thinkingItems(m.thinking ?? "")}
+    />
   );
 }
 
-function Pre({ label, text }: { label: string; text: string }) {
+function ToolCard({ t }: { t: ToolItem }) {
+  const running = t.status === "running";
+  const status = running ? ("running" as const) : t.isError ? (("error" as const)) : ("success" as const);
+  const input = collapse(t.inputPreview?.text ?? "", 60);
+  const output = t.outputPreview?.text ?? "";
+  const result = t.resultPreview?.text ?? "";
   return (
-    <div className="mt-1 first:mt-0">
-      <div className="text-[11px] text-muted">{label}</div>
-      <pre className="mt-1 overflow-x-auto rounded bg-bg p-2 font-mono text-xs whitespace-pre-wrap">
-        {text}
-      </pre>
-    </div>
+    <ToolResult
+      tool={t.toolName}
+      title={input || t.toolName}
+      kind={toolKind(t)}
+      status={status}
+      copyText={result || output || undefined}
+    >
+      {output && <ToolResultOutput>{output}</ToolResultOutput>}
+      {result && result !== output && <ToolResultOutput>{result}</ToolResultOutput>}
+      {t.patch && <ToolResultOutput language="diff">{t.patch.text}</ToolResultOutput>}
+    </ToolResult>
   );
+}
+
+// 终端类工具用 terminal 图标，其余走 custom（Wrench）。
+function toolKind(t: ToolItem): "terminal" | "custom" {
+  return /bash|shell|run|exec|command|terminal/i.test(t.toolName) ? "terminal" : "custom";
 }
 
 function collapse(s: string, n: number): string {

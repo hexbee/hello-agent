@@ -112,9 +112,13 @@ export interface AgentRebuildResult {
 
 // ── permissions ──────────────────────────────────────────────────────────────
 
+/** 审批 TTL，Main 的 PermissionManager 与 Renderer 倒计时共用。 */
+export const APPROVAL_TTL_MS = 60_000;
+
 export interface ApprovalResolveRequest {
   requestId: string;
-  decision: "allow" | "deny";
+  /** allow = 本会话内记住（低风险工具后续自动放行）；allow-once = 仅本次；deny = 拒绝。 */
+  decision: "allow" | "allow-once" | "deny";
   /** Echoed session the request belongs to; Main verifies ownership (§6.3). */
   sessionId: string;
 }

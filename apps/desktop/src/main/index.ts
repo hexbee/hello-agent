@@ -11,6 +11,7 @@ import { canonicalize, type AgentHost, type AgentHostPaths } from "./agent/host.
 import { SafeStorageCredentialStore } from "./auth/credential-store.js";
 import { TrustStore } from "./trust-store.js";
 import type { AgentEvent } from "@hello-agent/shared";
+import { APPROVAL_TTL_MS } from "@hello-agent/shared";
 import { registerIpc, type WorkspaceState } from "./ipc/register.js";
 
 const SPIKE_DATA_DIR = process.env.SPIKE_DATA_DIR; // probes override this
@@ -167,9 +168,9 @@ app.whenReady().then(async () => {
     getTrust: () => workspace.trust,
     getCwd: () => workspace.cwd,
     getSessionId: () => adapter?.sessionId ?? "",
-    ttlMs: 60_000,
-    onApprovalRequested: () => {},
-    onApprovalResolved: () => {},
+    ttlMs: APPROVAL_TTL_MS,
+    onApprovalRequested: (p) => adapter?.emitApprovalRequested(p),
+    onApprovalResolved: (p, decision) => adapter?.emitApprovalResolved(p.requestId, decision),
     audit: (r) => auditSink.enqueue(r),
   });
 

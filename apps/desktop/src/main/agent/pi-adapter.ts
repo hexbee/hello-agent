@@ -231,17 +231,29 @@ export class PiAdapter {
     return this.runtime;
   }
 
-  /** Resolves after preflight acceptance; full run continues in background events. */
+  /** Resolves after preflight acceptance; full run continues in background events.
+   * 注意：pi 的 session.prompt() 要等整轮 run 结束才 resolve，preflightResult
+   * 只是旁路回调——绝不能 await 它，否则 renderer 的用户气泡会被拖到回复之后。 */
   async prompt(text: string): Promise<{ accepted: boolean }> {
     const session = this.requireSession();
-    let accepted = false;
-    const p = session.prompt(text, {
-      preflightResult: (ok) => {
-        accepted = ok;
-      },
+    return new Promise<{ accepted: boolean }>((resolve) => {
+      let settled = false;
+      const finish = (accepted: boolean) => {
+        if (!settled) {
+          settled = true;
+          resolve({ accepted });
+        }
+      };
+      const p = session.prompt(text, {
+        preflightResult: (ok) => finish(ok),
+      });
+      // preflight 未触发 promise 就先结算（如运行前错误）：兑底，避免 IPC 挂起。
+      // 运行期错误经 agent.failed / agent.state 事件传递，不在这里等。
+      void p.then(
+        () => finish(false),
+        () => finish(false),
+      );
     });
-    await p.catch(() => undefined);
-    return { accepted };
   }
 
   async abort(): Promise<void> {
@@ -485,6 +497,30 @@ export class PiAdapter {
     this.host.emit(event);
   }
 
+  /** §7.2 — PermissionManager 回调经此发事件，复用统一 sequence 计数器。 */
+  emitApprovalRequested(pending: {
+    requestId: string;
+    toolCallId: string;
+    toolName: string;
+    displayInput: SafePreview;
+  }): void {
+    this.emit(
+      this.mk("approval.requested", {
+        requestId: pending.requestId,
+        toolCallId: pending.toolCallId,
+        toolName: pending.toolName,
+        displayInput: pending.displayInput,
+      }),
+    );
+  }
+
+  emitApprovalResolved(
+    requestId: string,
+    decision: "allow" | "allow-once" | "deny" | "cancelled" | "expired",
+  ): void {
+    this.emit(this.mk("approval.resolved", { requestId, decision }));
+  }
+
   private synthMessageId(): string {
     return `${this.sessionId}:m:${++this.assistantOrdinal}`;
   }
@@ -601,20 +637,74 @@ export class PiAdapter {
 
   buildSnapshot(pendingApprovals: AgentSnapshot["pendingApprovals"]): AgentSnapshot {
     const messages: AgentSnapshot["messages"] = [];
+    const tools: AgentSnapshot["tools"] = [];
     let ordinal = 0;
-    for (const m of this.session?.messages ?? []) {
-      const role = (m as { role?: string }).role;
-      if (role === "assistant") {
+    // 走 sessionManager entries 而非 session.messages：entry.timestamp 是
+    // message_end 落盘时间，配合 message.timestamp（流开始）可恢复耗时；
+    // toolResult 消息也在 entries 里，可重建已完成工具卡。
+    const entries = this.session?.sessionManager.getEntries() ?? [];
+    // assistant 消息里发出的 toolCall（id → name/arguments），等 toolResult 来配对。
+    const openCalls = new Map<string, { name: string; arguments: unknown }>();
+    for (const entry of entries) {
+      if (entry.type !== "message") continue;
+      const m = entry.message as {
+        role?: string;
+        content?: unknown;
+        timestamp?: number;
+        toolCallId?: string;
+        toolName?: string;
+        isError?: boolean;
+      };
+      const endMs = Date.parse(entry.timestamp);
+      if (m.role === "assistant") {
         ordinal++;
+        for (const c of (m.content as Array<{ type?: string; id?: string; name?: string; arguments?: unknown }> | undefined) ?? []) {
+          if (c.type === "toolCall" && c.id) {
+            openCalls.set(c.id, { name: c.name ?? "", arguments: c.arguments });
+          }
+        }
+        const startMs = m.timestamp;
         messages.push({
           messageId: `${this.sessionId}:m:${ordinal}`,
           role: "assistant",
           text: extractText(m),
           thinking: extractThinking(m),
+          ...(Number.isFinite(startMs) && Number.isFinite(endMs)
+            ? { durationSec: Math.max(0, (endMs - startMs!) / 1000) }
+            : {}),
+          ...(Number.isFinite(startMs) ? { timestamp: startMs } : {}),
         });
-      } else if (role === "user") {
-        messages.push({ messageId: `u:${ordinal}`, role: "user", text: extractText(m) });
+      } else if (m.role === "user") {
+        messages.push({
+          messageId: `u:${ordinal}`,
+          role: "user",
+          text: extractText(m),
+          ...(Number.isFinite(m.timestamp) ? { timestamp: m.timestamp } : {}),
+        });
+      } else if (m.role === "toolResult") {
+        const call = openCalls.get(m.toolCallId ?? "");
+        if (call) openCalls.delete(m.toolCallId!);
+        const contentText = extractText(m);
+        const resultTs = typeof m.timestamp === "number" && Number.isFinite(m.timestamp) ? m.timestamp : undefined;
+        tools.push({
+          toolCallId: m.toolCallId ?? `tool:${tools.length}`,
+          toolName: m.toolName ?? call?.name ?? "unknown",
+          inputPreview: safePreview(call?.arguments ?? {}),
+          ...(contentText ? { resultPreview: safePreview(contentText) } : {}),
+          isError: Boolean(m.isError),
+          timestamp: resultTs ?? (Number.isFinite(endMs) ? endMs : 0),
+        });
       }
+    }
+    // 未配对的 toolCall（中断/崩溃残留）：只补输入侧，避免静默丢失。
+    for (const [id, call] of openCalls) {
+      tools.push({
+        toolCallId: id,
+        toolName: call.name,
+        inputPreview: safePreview(call.arguments ?? {}),
+        isError: false,
+        timestamp: Number.MAX_SAFE_INTEGER,
+      });
     }
 
     return {
@@ -629,6 +719,7 @@ export class PiAdapter {
       },
       agentState: this.state,
       messages,
+      tools,
       activeToolPreviews: [...this.activeTools].map(([toolCallId, t]) => ({
         toolCallId,
         toolName: t.name,

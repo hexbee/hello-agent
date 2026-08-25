@@ -117,12 +117,12 @@ export const validateAgentPrompt = objectValidator<AgentPromptInput>({
 
 export interface ApprovalResolveInput {
   requestId: string;
-  decision: "allow" | "deny";
+  decision: "allow" | "allow-once" | "deny";
   sessionId: string;
 }
 export const validateApprovalResolve = objectValidator<ApprovalResolveInput>({
   requestId: (v) => str(v) && v.length > 0 && v.length <= 128,
-  decision: (v) => v === "allow" || v === "deny",
+  decision: (v) => v === "allow" || v === "allow-once" || v === "deny",
   sessionId: (v) => str(v) && v.length > 0 && v.length <= 128,
 });
 

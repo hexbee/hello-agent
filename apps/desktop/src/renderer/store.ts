@@ -26,6 +26,10 @@ export type MessageItem = {
   text: string;
   thinking: string | null;
   streaming: boolean;
+  /** 本地流式的起始时间（快照回放的消息没有）。 */
+  startedAt?: number;
+  /** 流式总耗时秒数，message.finished 时结算；用于「思考了 Ns」摘要。 */
+  durationSec?: number;
 };
 
 export type ChatEntry = MessageItem | ToolItem;
@@ -187,25 +191,170 @@ class Store {
   applySnapshot(snap: AgentSnapshot): void {
     this.lastSequence = snap.lastSequence;
     this.seqStarted = true;
-    const entries: ChatEntry[] = [];
-    for (const m of snap.messages) {
-      entries.push({
-        kind: "message",
+    // 同会话 resync（序列间隙恢复）用合并而非整体重建：
+    // 快照不含已完成工具卡、进行中的流式消息和本地计时字段，
+    // 整体替换会导致工具卡消失、流式消息被删（后续 delta 全部落空、
+    // message.finished 无法结算 → 摘要回退成「推理过程」）。
+    // 会话切换/首次加载仍走干净重建。
+    const sameSession =
+      this.state.session?.id != null && this.state.session.id === snap.session.id;
+
+    // 快照的统一条目视图：消息（含耗时）+ 已完成工具卡 + 运行中预览，按时间序交错。
+    type SnapEntry =
+      | {
+          kind: "message";
+          messageId: string;
+          role: "user" | "assistant";
+          text: string;
+          thinking?: string;
+          durationSec?: number;
+          timestamp?: number;
+        }
+      | {
+          kind: "tool";
+          toolCallId: string;
+          toolName: string;
+          inputPreview: SafePreview;
+          resultPreview?: SafePreview;
+          isError: boolean;
+          running: boolean;
+          timestamp: number;
+        };
+    const snapList: SnapEntry[] = [
+      ...snap.messages.map((m) => ({
+        kind: "message" as const,
         messageId: m.messageId,
         role: m.role,
         text: m.text,
-        thinking: m.thinking ?? null,
-        streaming: false,
-      });
-    }
-    for (const t of snap.activeToolPreviews) {
-      entries.push({
-        kind: "tool",
+        thinking: m.thinking,
+        durationSec: m.durationSec,
+        timestamp: m.timestamp,
+      })),
+      ...snap.tools.map((t) => ({
+        kind: "tool" as const,
+        toolCallId: t.toolCallId,
+        toolName: t.toolName,
+        inputPreview: t.inputPreview,
+        resultPreview: t.resultPreview,
+        isError: t.isError,
+        running: false,
+        timestamp: t.timestamp,
+      })),
+      ...snap.activeToolPreviews.map((t, i) => ({
+        kind: "tool" as const,
         toolCallId: t.toolCallId,
         toolName: t.toolName,
         inputPreview: t.preview,
-        status: "running",
-      });
+        isError: false,
+        running: true,
+        timestamp: Number.MAX_SAFE_INTEGER + i,
+      })),
+    ].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+
+    const toEntry = (s: SnapEntry): ChatEntry =>
+      s.kind === "message"
+        ? {
+            kind: "message",
+            messageId: s.messageId,
+            role: s.role,
+            text: s.text,
+            thinking: s.thinking ?? null,
+            streaming: false,
+            durationSec: s.durationSec,
+          }
+        : {
+            kind: "tool",
+            toolCallId: s.toolCallId,
+            toolName: s.toolName,
+            inputPreview: s.inputPreview,
+            resultPreview: s.resultPreview,
+            isError: s.isError,
+            status: s.running ? "running" : "done",
+          };
+
+    let entries: ChatEntry[];
+    if (!sameSession) {
+      entries = snapList.map(toEntry);
+    } else {
+      const entries_ = [...this.state.entries];
+      const findLocal = (id: string) =>
+        entries_.findIndex(
+          (e) => (e.kind === "message" ? e.messageId : e.toolCallId) === id,
+        );
+      // 落盘的用户消息与本地合成条目（local:u:*，pi 无用户消息事件只能
+      // 先本地画）按文本配对：配对成功就地换成真实 messageId，保住位置
+      // 且不产生重复气泡。
+      const syntheticUsers = entries_
+        .map((e, idx) =>
+          e.kind === "message" && e.role === "user" && e.messageId.startsWith("local:u:")
+            ? { idx, e }
+            : null,
+        )
+        .filter((x): x is { idx: number; e: MessageItem } => x !== null);
+      const paired = new Set<number>();
+
+      // 游标合并：快照条目按时间序走一遍；已存在的就地更新（保留本地
+      // 元数据），新增的插入到游标处，保持与快照一致的相对顺序；
+      // 本地独有条目（流式中消息、运行中工具）原样保留。
+      let cursor = 0;
+      for (const s of snapList) {
+        const id = s.kind === "message" ? s.messageId : s.toolCallId;
+        const at = findLocal(id);
+        if (at !== -1) {
+          const e = entries_[at]!;
+          if (s.kind === "message" && e.kind === "message") {
+            entries_[at] = {
+              ...e,
+              text: s.text,
+              thinking: s.thinking ?? null,
+              streaming: false,
+              durationSec:
+                e.durationSec ??
+                s.durationSec ??
+                (e.startedAt !== undefined
+                  ? Math.max(0, (Date.now() - e.startedAt) / 1000)
+                  : undefined),
+            };
+          } else if (s.kind === "tool" && e.kind === "tool") {
+            entries_[at] = {
+              ...e,
+              resultPreview: e.resultPreview ?? s.resultPreview,
+              isError: s.running ? e.isError : s.isError,
+              status: s.running ? e.status : "done",
+            };
+          }
+          if (at >= cursor) cursor = at + 1;
+          continue;
+        }
+        if (s.kind === "message" && s.role === "user") {
+          const match = syntheticUsers.find(
+            (x) => !paired.has(x.idx) && x.e.text === s.text,
+          );
+          if (match) {
+            paired.add(match.idx);
+            entries_[match.idx] = {
+              ...match.e,
+              messageId: s.messageId,
+              text: s.text,
+            };
+            if (match.idx >= cursor) cursor = match.idx + 1;
+            continue;
+          }
+        }
+        entries_.splice(cursor, 0, toEntry(s));
+        for (const su of syntheticUsers) {
+          if (su.idx >= cursor) su.idx += 1;
+        }
+        cursor += 1;
+      }
+      // 本地仍在 running 但快照已不含的工具：finished 事件在间隙中丢失，
+      // 就地终结，避免永久转圈。
+      const activeIds = new Set(snap.activeToolPreviews.map((t) => t.toolCallId));
+      entries = entries_.map((e) =>
+        e.kind === "tool" && e.status === "running" && !activeIds.has(e.toolCallId)
+          ? { ...e, status: "done" as const }
+          : e,
+      );
     }
     this.set({
       entries,
@@ -257,6 +406,7 @@ class Store {
               text: "",
               thinking: null,
               streaming: true,
+              startedAt: Date.now(),
             },
           ],
         });
@@ -276,7 +426,13 @@ class Store {
       case "message.finished": {
         this.updateEntry(
           (x): x is MessageItem => x.kind === "message" && x.messageId === e.messageId,
-          (m) => ({ ...m, streaming: false }),
+          (m) => ({
+            ...m,
+            streaming: false,
+            ...(m.startedAt && m.durationSec === undefined
+              ? { durationSec: Math.max(0, (Date.now() - m.startedAt) / 1000) }
+              : {}),
+          }),
         );
         break;
       }
@@ -317,6 +473,23 @@ class Store {
       }
       case "agent.state": {
         this.set({ agentState: e.state });
+        // 一轮结束（含中断/失败）时终结残留的流式消息，避免永久 streaming。
+        if (e.state !== "running" && this.state.entries.some((x) => x.kind === "message" && x.streaming)) {
+          const entries = this.state.entries.map((x) =>
+            x.kind === "message" && x.streaming
+              ? {
+                  ...x,
+                  streaming: false,
+                  durationSec:
+                    x.durationSec ??
+                    (x.startedAt !== undefined
+                      ? Math.max(0, (Date.now() - x.startedAt) / 1000)
+                      : undefined),
+                }
+              : x,
+          );
+          this.set({ entries });
+        }
         // pi 的会话文件是懒落盘的：首条 assistant 消息到达时才写入 .jsonl。
         // 一轮对话结束（idle/failed）后文件已存在，此时刷新侧边栏，
         // 否则新会话要等到下次切换会话才会出现在列表里。
@@ -370,25 +543,41 @@ class Store {
   async prompt(text: string): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
+    const messageId = `local:u:${Date.now()}`;
+    // 乐观追加：main 侧 prompt IPC 只等 preflight 就返回，但事件与 IPC
+    // 返回的到达顺序不保证——先画气泡再发请求，失败时回滚。
+    this.set({
+      entries: [
+        ...this.state.entries,
+        {
+          kind: "message",
+          messageId,
+          role: "user",
+          text: trimmed,
+          thinking: null,
+          streaming: false,
+        },
+      ],
+      banner: null,
+    });
     try {
-      unwrap(await api().agent.prompt(trimmed));
-      // pi has no user-message event; append locally (snapshot replays it later).
-      this.set({
-        entries: [
-          ...this.state.entries,
-          {
-            kind: "message",
-            messageId: `local:u:${Date.now()}`,
-            role: "user",
-            text: trimmed,
-            thinking: null,
-            streaming: false,
-          },
-        ],
-        banner: null,
-      });
+      const r = unwrap(await api().agent.prompt(trimmed));
+      if (!r.accepted) {
+        // preflight 拒绝（如 agent 忙）：撤回本地气泡。
+        this.set({
+          entries: this.state.entries.filter(
+            (x) => !(x.kind === "message" && x.messageId === messageId),
+          ),
+          banner: { kind: "error", text: "Agent 正在运行，消息未发送" },
+        });
+      }
     } catch (e) {
-      this.set({ banner: { kind: "error", text: String(e) } });
+      this.set({
+        entries: this.state.entries.filter(
+          (x) => !(x.kind === "message" && x.messageId === messageId),
+        ),
+        banner: { kind: "error", text: String(e) },
+      });
     }
   }
 
@@ -415,12 +604,15 @@ class Store {
     }
   }
 
-  async resolveApproval(requestId: string, decision: "allow" | "deny"): Promise<void> {
+  async resolveApproval(
+    requestId: string,
+    decision: "allow" | "allow-once" | "deny",
+  ): Promise<void> {
     const sessionId = this.state.session?.id ?? "";
     try {
       unwrap(await api().approvals.resolve(requestId, sessionId, decision));
     } catch (e) {
-      this.set({ banner: { kind: "error", text: String(e) } });
+      this.set({ banner: { kind: "error", text: `审批提交失败：${String(e)}` } });
     }
   }
 

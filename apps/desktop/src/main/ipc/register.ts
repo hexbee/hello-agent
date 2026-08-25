@@ -299,7 +299,7 @@ export function registerIpc(opts: {
         sessionId: v.data.sessionId,
         toolCallId: "",
         toolName: "(approval.resolve)",
-        decision: v.data.decision === "allow" ? "allow" : "deny",
+        decision: v.data.decision === "deny" ? "deny" : v.data.decision,
         reason: `requestId=${v.data.requestId}`,
         inputSummary: { text: "", truncated: false, redacted: false },
       });

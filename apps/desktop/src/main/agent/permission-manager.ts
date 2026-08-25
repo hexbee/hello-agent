@@ -24,7 +24,7 @@ const HIGH_RISK_BASH = [
   /\bdd\s+if=/i,
 ];
 
-export type ApprovalDecision = "allow" | "deny" | "cancelled" | "expired";
+export type ApprovalDecision = "allow" | "allow-once" | "deny" | "cancelled" | "expired";
 
 export interface PendingApproval {
   requestId: string;
@@ -173,16 +173,21 @@ export class PermissionManager {
 
     clearTimeout(entry.timer);
     entry.status =
-      decision === "allow" || decision === "deny" ? "resolved" : decision;
+      decision === "allow" || decision === "allow-once" || decision === "deny"
+        ? "resolved"
+        : decision;
 
-    if (decision === "allow") {
-      if (event.toolName === "bash") {
-        const command = String((event.input as { command?: unknown })?.command ?? "");
-        if (!HIGH_RISK_BASH.some((p) => p.test(command))) this.sessionAllows.add("bash");
-      } else {
-        this.sessionAllows.add(event.toolName);
+    if (decision === "allow" || decision === "allow-once") {
+      // allow-once 仅本次放行；只有 allow 写入会话规则（§7.1）。
+      if (decision === "allow") {
+        if (event.toolName === "bash") {
+          const command = String((event.input as { command?: unknown })?.command ?? "");
+          if (!HIGH_RISK_BASH.some((p) => p.test(command))) this.sessionAllows.add("bash");
+        } else {
+          this.sessionAllows.add(event.toolName);
+        }
       }
-      audit("allow");
+      audit(decision);
       return { kind: "pass" };
     }
 
@@ -234,7 +239,7 @@ export class PermissionManager {
   resolveApproval(
     requestId: string,
     sessionId: string,
-    decision: "allow" | "deny",
+    decision: "allow" | "allow-once" | "deny",
   ): { ok: true } | { ok: false; reason: string } {
     const entry = this.pending.get(requestId);
     if (!entry) return { ok: false, reason: "unknown or already-resolved requestId" };
