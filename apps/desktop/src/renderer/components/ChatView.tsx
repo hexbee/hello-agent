@@ -1,5 +1,11 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useRef, useState } from "react";
 import Markstream from "markstream-react";
+import {
+  Message,
+  MessageContent,
+  MessageHeader,
+} from "./agents/message";
+import { MessageScroller } from "./agents/message-scroller";
 import type { ChatEntry, MessageItem, ToolItem } from "../store";
 import { store, useStore } from "../store";
 import { ApprovalStack } from "./ApprovalStack";
@@ -12,39 +18,39 @@ import { Composer } from "./Composer";
 const MessageView = memo(function MessageView({ m }: { m: MessageItem }) {
   const isStreaming = m.streaming;
   return (
-    <div className={m.role === "user" ? "flex justify-end" : ""}>
-      <div
-        className={
-          m.role === "user"
-            ? "max-w-[80%] rounded-2xl rounded-br-sm bg-accent/20 px-4 py-2.5 whitespace-pre-wrap"
-            : "max-w-full"
-        }
-      >
+    <Message from={m.role === "user" ? "user" : "assistant"}>
+      <MessageContent>
         {m.role === "assistant" && (
-          <div className="mb-1 text-xs font-medium text-muted">Assistant</div>
-        )}
-        {m.thinking && (
-          <details className="mb-2 rounded-lg border border-border bg-panel-2 px-3 py-2">
-            <summary className="cursor-pointer text-xs text-muted select-none">
-              推理过程
-              {isStreaming && <span className="ml-2 animate-pulse">…</span>}
-            </summary>
-            <div className="mt-2 text-sm whitespace-pre-wrap text-muted">{m.thinking}</div>
-          </details>
+          <MessageHeader>Assistant</MessageHeader>
         )}
         {m.role === "user" ? (
-          m.text
-        ) : m.text || isStreaming ? (
-          <Markstream
-            content={m.text}
-            final={!isStreaming}
-            smoothStreaming={isStreaming ? "auto" : false}
-            fade={!isStreaming}
-            typewriter={isStreaming}
-          />
-        ) : null}
-      </div>
-    </div>
+          <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-accent-subtle px-4 py-2.5 whitespace-pre-wrap">
+            {m.text}
+          </div>
+        ) : (
+          <div className="max-w-full">
+            {m.thinking && (
+              <details className="mb-2 rounded-lg border border-border bg-panel-2 px-3 py-2">
+                <summary className="cursor-pointer text-xs text-muted select-none">
+                  推理过程
+                  {isStreaming && <span className="ml-2 animate-pulse">…</span>}
+                </summary>
+                <div className="mt-2 text-sm whitespace-pre-wrap text-muted">{m.thinking}</div>
+              </details>
+            )}
+            {m.text || isStreaming ? (
+              <Markstream
+                content={m.text}
+                final={!isStreaming}
+                smoothStreaming={isStreaming ? "auto" : false}
+                fade={!isStreaming}
+                typewriter={isStreaming}
+              />
+            ) : null}
+          </div>
+        )}
+      </MessageContent>
+    </Message>
   );
 });
 
@@ -93,69 +99,56 @@ function collapse(s: string, n: number): string {
 
 export function ChatView() {
   const s = useStore();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const pinnedRef = useRef(true);
-  const [pinned, setPinned] = useState(true);
-
-  // Reader-aware follow: stick to the live edge until the user scrolls away.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const onScroll = () => {
-      const p = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-      pinnedRef.current = p;
-      setPinned((prev) => (prev === p ? prev : p));
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
-  }, []);
-
-  // Follow not only on new entries, but on every delta that grows the live
-  // edge (streaming text / thinking / tool output) — otherwise long streamed
-  // replies grow below the viewport until the next entry forces a jump.
-  const lastEntry = s.entries[s.entries.length - 1];
-  const lastEntryId = lastEntry ? entryKey(lastEntry) : "";
-  const liveEdgeKey = lastEntry ? liveKey(lastEntry) : "";
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
-  }, [lastEntryId, liveEdgeKey]);
-
-  const jumpToBottom = () => {
-    const el = scrollRef.current;
-    if (!el) return;
-    pinnedRef.current = true;
-    setPinned(true);
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  };
+  // beUI MessageScroller owns reader-aware follow (live-edge pinning,
+  // release-on-scroll); we only mirror its state for the jump-back button.
+  const [following, setFollowing] = useState(true);
+  const viewportEl = useRef<HTMLElement | null>(null);
 
   return (
     <>
       <div className="relative min-h-0 flex-1">
-        <div ref={scrollRef} className="h-full overflow-y-auto px-6 py-4">
+        <MessageScroller
+          className="h-full"
+          navigation="rail"
+          busy={s.agentState === "running"}
+          onFollowChange={setFollowing}
+          viewportRef={(el) => {
+            viewportEl.current = el;
+          }}
+          viewportClassName="px-6 py-4"
+          contentClassName={
+            s.entries.length === 0
+              ? "mx-auto w-full max-w-3xl"
+              : "mx-auto flex w-full max-w-3xl flex-col gap-4"
+          }
+        >
           {s.entries.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-muted">
               <div className="text-base">开始新的对话</div>
               <div className="text-xs">输入消息，agent 将在工作区内协助你。</div>
             </div>
           ) : (
-            <div className="mx-auto flex max-w-3xl flex-col gap-4">
-              {s.entries.map((e) =>
-                e.kind === "message" ? (
-                  <MessageView key={e.messageId} m={e} />
-                ) : (
-                  <ToolCard key={e.toolCallId} t={e} />
-                ),
-              )}
-            </div>
+            s.entries.map((e) =>
+              e.kind === "message" ? (
+                <MessageView key={e.messageId} m={e} />
+              ) : (
+                <ToolCard key={e.toolCallId} t={e} />
+              ),
+            )
           )}
-        </div>
-        {!pinned && (
+        </MessageScroller>
+        {!following && (
           <button
             type="button"
-            onClick={jumpToBottom}
+            onClick={() => {
+              const el = viewportEl.current;
+              if (!el) return;
+              el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+              // Scroller re-detects live edge via scroll events and flips
+              // `following` back through onFollowChange.
+            }}
             title="回到底部并继续跟随"
-            className="absolute bottom-3 right-8 flex h-9 items-center gap-1 rounded-full border border-border bg-panel px-3 text-sm text-fg shadow-lg transition hover:border-accent/50 hover:text-accent"
+            className="absolute bottom-3 right-8 z-10 flex h-9 items-center gap-1 rounded-full border border-border bg-panel px-3 text-sm text-fg shadow-lg transition hover:border-accent/50 hover:text-accent"
           >
             回到底部 ↓
           </button>
@@ -168,23 +161,6 @@ export function ChatView() {
       </div>
     </>
   );
-}
-
-function entryKey(e: MessageItem | ToolItem): string {
-  return e.kind === "message" ? e.messageId : e.toolCallId;
-}
-
-/** Signature that changes whenever the last entry's visible content grows. */
-function liveKey(e: ChatEntry): string {
-  if (e.kind === "message") {
-    return `${e.text.length}:${e.thinking?.length ?? 0}:${e.streaming ? 1 : 0}`;
-  }
-  return [
-    e.status,
-    e.outputPreview?.text.length ?? 0,
-    e.resultPreview?.text.length ?? 0,
-    e.patch?.text.length ?? 0,
-  ].join(":");
 }
 
 export { store };

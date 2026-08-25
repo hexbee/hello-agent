@@ -39,6 +39,12 @@ export default defineConfig({
     },
   },
   renderer: {
+    resolve: {
+      alias: {
+        // beUI generated components use shadcn-style "@/" imports
+        "@": resolve(__dirname, "src/renderer"),
+      },
+    },
     plugins: [
       react(),
       tailwindcss(),

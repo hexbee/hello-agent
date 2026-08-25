@@ -374,8 +374,8 @@ type PendingApproval = {
 - 使用 **pnpm** 与 `pnpm-workspace.yaml`；文档、CI 和本地命令不得混用 npm。
 - 锁定 React、Tailwind、Electron、pi、markstream-react 及 beUI 生成组件的精确兼容版本；不使用 `18+`、`≥2.0` 作为可执行安装要求。
 - **已锁定（Spike 实测）**：`@earendil-works/pi-coding-agent@0.84.2`、`@earendil-works/pi-ai@0.84.2`、`electron@43.4.1`、`electron-vite@5.0.0`、`typescript@~5.9.3`。React/Tailwind/markstream-react/beUI 在进入 Renderer 实施时锁定。
-- beUI registry URL/安装形式以其官方当前说明为准；将生成源码、版本和来源记录在仓库，不猜测 URL 后缀或包名。
-- Beautiful UI 仅作视觉参考，不引入运行时代码。
+- beUI registry URL/安装形式以其官方当前说明为准；将生成源码、版本和来源记录在仓库，不猜测 URL 后缀或包名。Beautiful UI 仅作视觉参考，不引入运行时代码。
+- **已锁定（Renderer 实施期）**：beUI 已选定并集成（2026-08-25）。通过 shadcn registry 以源码形式生成进 `apps/desktop/src/renderer/components/{agents,motion}` 与 `src/renderer/lib`，registry 来源 `https://beui.dev/r/{slug}.json`，采用组件：message、message-bubble、message-scroller、approval-card、tool-result、file-diff、prompt-input 及其共享依赖（preview-rail、select、popover-morph、ease、use-dismiss 等 hooks）。运行时依赖精确版本：`motion@13.1.1`、`lucide-react@1.33.0`、`clsx@2.1.1`、`tailwind-merge@3.6.0`。shadcn 别名与 token 见 `apps/desktop/components.json` 与 `styles.css @theme`。验证：`pnpm probe:beui`（CDP 冒烟：挂载无错、语义 token 生效）。
 
 ### 9.2 构建发布决策（开工前完成）
 

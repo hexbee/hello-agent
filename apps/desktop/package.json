@@ -28,8 +28,13 @@
   "dependencies": {
     "@earendil-works/pi-ai": "0.84.2",
     "@earendil-works/pi-coding-agent": "0.84.2",
+    "clsx": "2.1.1",
+    "lucide-react": "1.33.0",
     "markstream-react": "2.0.3",
+    "motion": "13.1.1",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "shiki": "^4.4.3",
+    "tailwind-merge": "3.6.0"
   }
 }

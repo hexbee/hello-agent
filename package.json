@@ -17,6 +17,7 @@
     "probe:dispose-rebuild": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/dispose-rebuild-probe.ts",
     "probe:delta-stress": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/delta-stress-probe.ts",
     "probe:sandbox": "bash spikes/probes/sandbox-probe.sh",
+    "probe:beui": "node spikes/probes/beui-smoke.mjs",
     "probe:auth": "bash spikes/probes/auth-smoke.sh",
     "probe:watchdog": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/watchdog-probe.ts",
     "probe:trust-persist": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/trust-persist-probe.ts",

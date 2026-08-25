@@ -12,11 +12,47 @@
   --color-accent: #5b8def;
   --color-danger: #e5534b;
   --color-ok: #57ab5a;
+
+  /* shadcn/beUI semantic tokens — mapped onto the palette above */
+  --color-background: var(--color-bg);
+  --color-foreground: var(--color-fg);
+  --color-card: var(--color-panel);
+  --color-card-foreground: var(--color-fg);
+  --color-popover: var(--color-panel-2);
+  --color-popover-foreground: var(--color-fg);
+  --color-primary: var(--color-accent);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--color-panel-2);
+  --color-secondary-foreground: var(--color-fg);
+  --color-muted-foreground: var(--color-muted);
+  --color-accent-subtle: #232a36;
+  --color-destructive: var(--color-danger);
+  --color-destructive-foreground: #ffffff;
+  --color-input: var(--color-border);
+  --color-ring: var(--color-accent);
+  --color-success: var(--color-ok);
 }
 
 html {
   color-scheme: dark;
   height: 100%;
+}
+
+/* beUI prompt-input textarea utility */
+@utility scrollbar-hide {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* 主转录视口永远隐藏滚动条（rail 刻度条承担位置感知）。
+   不用 > 直接子级选择器：rail 模式下 section 被包在 PreviewRail 内。 */
+[data-slot="message-scroller"] section {
+  scrollbar-width: none;
+}
+[data-slot="message-scroller"] section::-webkit-scrollbar {
+  display: none;
 }
 
 body {
@@ -40,21 +76,24 @@ body {
   height: 100%;
 }
 
-/* thin scrollbars */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-border) transparent;
-}
-*::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-*::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 4px;
-}
-*::-webkit-scrollbar-track {
-  background: transparent;
+/* thin scrollbars —— 必须放进 @layer base：未分层样式会压过 @layer utilities
+   里的任意工具类（如 beUI 的 [scrollbar-width:none]），导致滚动条藏不掉。 */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 4px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
