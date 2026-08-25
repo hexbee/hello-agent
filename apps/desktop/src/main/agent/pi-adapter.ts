@@ -588,11 +588,15 @@ export class PiAdapter {
         this.activeTools.delete(event.toolCallId);
         const result = event.result as { details?: { patch?: unknown; diff?: unknown } } | undefined;
         const patchRaw = result?.details?.patch ?? result?.details?.diff;
+        // 与 buildSnapshot 的 toolResult 分支保持一致：取 text 块纯文本。
+        // 直接 safePreview(result) 会把 {"content":[{"type":"text",...}]}
+        // 原样渲染，而切换会话后的快照路径却是纯文本，两边对不上。
+        const resultText = extractText(result);
         this.emit(
           this.mk("tool.finished", {
             toolCallId: event.toolCallId,
             isError: event.isError,
-            resultPreview: safePreview(result),
+            ...(resultText ? { resultPreview: safePreview(resultText) } : {}),
             ...(patchRaw ? { patch: safePreview(patchRaw) } : {}),
           }),
         );
@@ -664,15 +668,28 @@ export class PiAdapter {
           }
         }
         const startMs = m.timestamp;
+        const text = extractText(m);
+        const thinking = extractThinking(m);
         messages.push({
           messageId: `${this.sessionId}:m:${ordinal}`,
           role: "assistant",
-          text: extractText(m),
-          thinking: extractThinking(m),
-          ...(Number.isFinite(startMs) && Number.isFinite(endMs)
+          text,
+          thinking,
+          // 思考耗时只能从 JSONL 近似恢复：thinking 块没有独立时间戳。
+          // thinking-only 消息（后接工具调用）整段时长 ≈ 思考时长，保留；
+          // thinking + text 混合消息整段时长包含正文生成时间，会显示成
+          // 失真的「思考了 11s」，宁可不给（UI 回退成「推理过程」）。
+          ...(thinking && !text && Number.isFinite(startMs) && Number.isFinite(endMs)
             ? { durationSec: Math.max(0, (endMs - startMs!) / 1000) }
             : {}),
-          ...(Number.isFinite(startMs) ? { timestamp: startMs } : {}),
+          // 排序时间用 entry.timestamp（落盘时间）：pi 会把 assistant 消息的
+          // message.timestamp 写成与其消费的 toolResult 相同的毫秒值，稳定
+          // 排序会让该消息被拉到工具卡前面（切换会话后多出一个「思考了」块）。
+          ...(Number.isFinite(endMs)
+            ? { timestamp: endMs }
+            : Number.isFinite(startMs)
+              ? { timestamp: startMs }
+              : {}),
         });
       } else if (m.role === "user") {
         messages.push({

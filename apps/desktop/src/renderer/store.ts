@@ -418,7 +418,18 @@ class Store {
           (x): x is MessageItem => x.kind === "message" && x.messageId === e.messageId,
           (m) =>
             e.type === "message.delta"
-              ? { ...m, text: m.text + e.delta }
+              ? {
+                  ...m,
+                  text: m.text + e.delta,
+                  // 首段正文到达即结算思考耗时：思考时长 ≈ 消息开始 → 首个正文
+                  // delta。等 message.finished 才结算会把正文生成时间也算进去
+                  //（短思考长回答时会显示成「思考了 11s」）。
+                  durationSec:
+                    m.durationSec ??
+                    (m.thinking && m.startedAt !== undefined
+                      ? Math.max(0, (Date.now() - m.startedAt) / 1000)
+                      : undefined),
+                }
               : { ...m, thinking: (m.thinking ?? "") + e.delta },
         );
         break;
