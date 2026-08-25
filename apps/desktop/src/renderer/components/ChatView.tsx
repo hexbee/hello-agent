@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from "react";
+import { memo, useRef, useState, useSyncExternalStore } from "react";
 import Markstream from "markstream-react";
 import {
   Message,
@@ -15,7 +15,27 @@ import { Composer } from "./Composer";
 // smooth streaming. Streaming vs history props follow the markstream skill:
 // streaming → smoothStreaming="auto" / fade=false / typewriter;
 // history → smoothStreaming=false / typewriter off.
-const MessageView = memo(function MessageView({ m }: { m: MessageItem }) {
+// 跟随系统主题：markstream 的 isDark 与 CSS 的 prefers-color-scheme
+// 都以系统为准，单一事实来源，避免应用内再做一个独立主题状态。
+function useSystemIsDark(): boolean {
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      const mql = window.matchMedia("(prefers-color-scheme: dark)");
+      mql.addEventListener("change", onStoreChange);
+      return () => mql.removeEventListener("change", onStoreChange);
+    },
+    () => window.matchMedia("(prefers-color-scheme: dark)").matches,
+    () => true,
+  );
+}
+
+const MessageView = memo(function MessageView({
+  m,
+  isDark,
+}: {
+  m: MessageItem;
+  isDark: boolean;
+}) {
   const isStreaming = m.streaming;
   return (
     <Message from={m.role === "user" ? "user" : "assistant"}>
@@ -45,6 +65,9 @@ const MessageView = memo(function MessageView({ m }: { m: MessageItem }) {
                 smoothStreaming={isStreaming ? "auto" : false}
                 fade={!isStreaming}
                 typewriter={isStreaming}
+                // markstream 官方主题开关：切换渲染器根节点 dark 类，
+                // 使 --secondary/--code-bg 等 token 跟随系统明暗。
+                isDark={isDark}
               />
             ) : null}
           </div>
@@ -99,6 +122,7 @@ function collapse(s: string, n: number): string {
 
 export function ChatView() {
   const s = useStore();
+  const isDark = useSystemIsDark();
   // beUI MessageScroller owns reader-aware follow (live-edge pinning,
   // release-on-scroll); we only mirror its state for the jump-back button.
   const [following, setFollowing] = useState(true);
@@ -130,7 +154,7 @@ export function ChatView() {
           ) : (
             s.entries.map((e) =>
               e.kind === "message" ? (
-                <MessageView key={e.messageId} m={e} />
+                <MessageView key={e.messageId} m={e} isDark={isDark} />
               ) : (
                 <ToolCard key={e.toolCallId} t={e} />
               ),

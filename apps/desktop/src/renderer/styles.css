@@ -33,8 +33,25 @@
   --color-success: var(--color-ok);
 }
 
+/* 亮色主题：跟随系统。Tailwind v4 的工具类直接引用 var(--color-*)，
+   因此只需在媒体查询里覆盖基础调色板，语义 token（var 映射）自动联动。 */
+@media (prefers-color-scheme: light) {
+  :root {
+    --color-bg: #f5f6f8;
+    --color-panel: #ffffff;
+    --color-panel-2: #ebeef3;
+    --color-border: #d5dae1;
+    --color-fg: #1a1d23;
+    --color-muted: #5a6172;
+    --color-accent: #4a7def;
+    --color-danger: #d73a49;
+    --color-ok: #1a7f37;
+    --color-accent-subtle: #e3eafc;
+  }
+}
+
 html {
-  color-scheme: dark;
+  color-scheme: light dark;
   height: 100%;
 }
 
