@@ -107,7 +107,7 @@ export function SessionSidebar() {
           ＋ 新会话
         </button>
         <button
-          className="flex cursor-pointer items-center gap-1 rounded-lg border border-border px-2 py-1.5 text-xs text-muted hover:text-fg"
+          className="flex cursor-pointer items-center gap-1 rounded-lg border border-border px-2 py-1.5 text-xs text-muted-foreground hover:text-fg"
           title="打开新的项目文件夹"
           onClick={() => void store.openWorkspace()}
         >
@@ -118,7 +118,7 @@ export function SessionSidebar() {
 
       <div className="min-h-0 flex-1 overflow-hidden px-2">
         {items.length === 0 ? (
-          <p className="px-2 py-4 text-xs text-muted">暂无项目，点击「项目」打开文件夹</p>
+          <p className="px-2 py-4 text-xs text-muted-foreground">暂无项目，点击「项目」打开文件夹</p>
         ) : (
           // key=项目数：项目增减时重挂载，让新项目按默认展开状态出现
           <AISidebar
@@ -144,7 +144,7 @@ export function SessionSidebar() {
 
       <div className="border-t border-border px-3 py-2">
         <button
-          className="cursor-pointer text-xs text-muted hover:text-fg"
+          className="cursor-pointer text-xs text-muted-foreground hover:text-fg"
           onClick={() => void store.closeWorkspace()}
         >
           关闭工作区
@@ -161,7 +161,7 @@ function ForkSection() {
   return (
     <div className="border-t border-border px-3 py-2">
       <button
-        className="flex w-full cursor-pointer items-center justify-between text-xs text-muted hover:text-fg"
+        className="flex w-full cursor-pointer items-center justify-between text-xs text-muted-foreground hover:text-fg"
         onClick={() => setForkOpen(!forkOpen)}
       >
         从历史分叉 <span>{forkOpen ? "▾" : "▸"}</span>
@@ -171,7 +171,7 @@ function ForkSection() {
           {s.forkCandidates.map((c) => (
             <button
               key={c.entryId}
-              className="block w-full cursor-pointer truncate rounded px-1 py-1 text-left text-[11px] text-muted hover:bg-panel-2 hover:text-fg"
+              className="block w-full cursor-pointer truncate rounded px-1 py-1 text-left text-[11px] text-muted-foreground hover:bg-panel-2 hover:text-fg"
               title={c.text}
               onClick={() => void store.fork(c.entryId)}
             >

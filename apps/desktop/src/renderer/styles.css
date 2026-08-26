@@ -8,7 +8,9 @@
   --color-panel-2: #1c212b;
   --color-border: #2a3140;
   --color-fg: #e6e9ef;
-  --color-muted: #8b93a5;
+  --color-fg-muted: #8b93a5;
+  /* muted = 次级表面色（hover/选中/卡片底），遵循 shadcn 语义，必须是低对比底色 */
+  --color-muted: #212734;
   --color-accent: #5b8def;
   --color-danger: #e5534b;
   --color-ok: #57ab5a;
@@ -24,7 +26,7 @@
   --color-primary-foreground: #ffffff;
   --color-secondary: var(--color-panel-2);
   --color-secondary-foreground: var(--color-fg);
-  --color-muted-foreground: var(--color-muted);
+  --color-muted-foreground: var(--color-fg-muted);
   --color-accent-subtle: #232a36;
   --color-destructive: var(--color-danger);
   --color-destructive-foreground: #ffffff;
@@ -65,7 +67,8 @@
     --color-panel-2: #ebeef3;
     --color-border: #d5dae1;
     --color-fg: #1a1d23;
-    --color-muted: #5a6172;
+    --color-fg-muted: #5a6172;
+    --color-muted: #eef0f4;
     --color-accent: #4a7def;
     --color-danger: #d73a49;
     --color-ok: #1a7f37;

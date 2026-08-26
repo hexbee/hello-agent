@@ -303,7 +303,7 @@ export function ChatView() {
           }
         >
           {s.entries.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 text-muted">
+            <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
               <div className="text-base">开始新的对话</div>
               <div className="text-xs">输入消息，agent 将在工作区内协助你。</div>
             </div>

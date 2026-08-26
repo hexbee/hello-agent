@@ -28,10 +28,10 @@ export function TopBar() {
                 : "bg-ok"
           }`}
         />
-        <span className="truncate font-mono text-xs text-muted" title={s.cwd}>
+        <span className="truncate font-mono text-xs text-muted-foreground" title={s.cwd}>
           {s.cwd.split("/").pop() || s.cwd}
         </span>
-        <span className="rounded bg-panel-2 px-1.5 py-0.5 text-[11px] text-muted">
+        <span className="rounded bg-panel-2 px-1.5 py-0.5 text-[11px] text-muted-foreground">
           {TRUST_LABEL[s.trust]}
         </span>
       </div>
@@ -60,7 +60,7 @@ export function TopBar() {
 
       {s.authState.configured ? (
         <button
-          className="cursor-pointer text-xs text-muted hover:text-fg"
+          className="cursor-pointer text-xs text-muted-foreground hover:text-fg"
           title={`provider: ${s.authState.provider} · ${s.authState.maskedHint ?? ""}\n点击管理凭据`}
           onClick={() => store.openAuthDialog()}
         >

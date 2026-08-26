@@ -29,7 +29,7 @@ export function AuthDialog() {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="w-[420px] rounded-xl border border-border bg-panel p-6 shadow-2xl">
         <h2 className="text-base font-semibold">配置 Provider 凭据</h2>
-        <p className="mt-1 text-xs text-muted">
+        <p className="mt-1 text-xs text-muted-foreground">
           API key 将保存在系统安全存储（macOS 钥匙串），应用与 Pi CLI 的凭据互相隔离。
         </p>
 
@@ -40,12 +40,12 @@ export function AuthDialog() {
         )}
 
         {keyProviders.length === 0 ? (
-          <p className="mt-4 text-sm text-muted">
+          <p className="mt-4 text-sm text-muted-foreground">
             未发现可配置的 provider。请确认应用版本包含内置模型目录。
           </p>
         ) : (
           <>
-            <label className="mt-4 block text-xs text-muted">Provider</label>
+            <label className="mt-4 block text-xs text-muted-foreground">Provider</label>
             <select
               className="mt-1 w-full cursor-pointer rounded-lg border border-border bg-panel-2 px-2 py-2 text-sm outline-none focus:border-accent"
               value={selected}
@@ -59,7 +59,7 @@ export function AuthDialog() {
               ))}
             </select>
 
-            <label className="mt-3 block text-xs text-muted">API Key</label>
+            <label className="mt-3 block text-xs text-muted-foreground">API Key</label>
             <input
               autoFocus
               type="password"
