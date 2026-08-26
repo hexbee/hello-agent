@@ -19,10 +19,25 @@ import type {
 
 type Channel = string;
 
+export interface ProjectSessionInfo {
+  file: string;
+  name?: string;
+  modified?: number;
+}
+
+export interface ProjectSessions {
+  cwd: string;
+  name: string;
+  sessions: ProjectSessionInfo[];
+}
+
 const INVOKE_COMMANDS = new Set<Channel>([
   "workspace.pickAndOpen",
   "workspace.trust.set",
   "workspace.close",
+  "projects.list",
+  "projects.sessions",
+  "projects.open",
   "auth.status",
   "auth.begin",
   "auth.submitKey",
@@ -56,6 +71,12 @@ const api = {
     setTrust: (trust: WorkspaceTrustSetRequest["trust"]): Promise<Result<{ cwd: string; trust: string }>> =>
       invoke("workspace.trust.set", { trust } satisfies WorkspaceTrustSetRequest),
     close: (): Promise<Result<{ closed: true }>> => invoke("workspace.close"),
+  },
+  projects: {
+    list: (): Promise<Result<{ projects: string[] }>> => invoke("projects.list"),
+    sessions: (): Promise<Result<ProjectSessions[]>> => invoke("projects.sessions"),
+    open: (cwd: string): Promise<Result<{ cwd: string; trust: string }>> =>
+      invoke("projects.open", { cwd }),
   },
   auth: {
     status: (): Promise<Result<AgentSnapshot["authState"]>> => invoke("auth.status"),

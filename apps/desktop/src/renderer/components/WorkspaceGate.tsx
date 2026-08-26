@@ -22,6 +22,25 @@ export function WorkspaceGate() {
             >
               打开文件夹…
             </button>
+            {s.projects.length > 0 && (
+              <div>
+                <div className="mb-2 text-xs text-muted">最近的项目</div>
+                <div className="flex flex-col gap-1">
+                  {s.projects.map((p) => (
+                    <button
+                      key={p.cwd}
+                      className="flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-left text-sm hover:bg-panel-2"
+                      onClick={() => void store.openProject(p.cwd)}
+                    >
+                      <span className="truncate font-medium">{p.name || p.cwd.split("/").pop()}</span>
+                      <span className="shrink-0 text-xs text-muted">
+                        {p.sessions.length > 0 ? `${p.sessions.length} 个会话` : "无会话"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         ) : (
           <>

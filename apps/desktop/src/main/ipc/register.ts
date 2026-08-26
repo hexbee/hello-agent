@@ -16,6 +16,7 @@ import {
   type Result,
 } from "@hello-agent/shared";
 import type { PiAdapter } from "../agent/pi-adapter.js";
+import type { ProjectsStore } from "../projects-store.js";
 import { createAuditSink } from "../agent/permission-manager.js";
 
 export interface WorkspaceState {
@@ -34,6 +35,7 @@ export function registerIpc(opts: {
   closeWorkspace(): Promise<void>;
   getAdapter(): PiAdapter | undefined;
   auditFile: string | undefined;
+  projects: ProjectsStore;
 }): void {
   const audit = createAuditSink(opts.auditFile);
   const ok = <T>(data: T): Result<T> => ({ ok: true, data });
@@ -93,6 +95,7 @@ export function registerIpc(opts: {
       }
       // §4.1: Main canonicalizes; Renderer never supplies paths.
       const cwd = await opts.openWorkspace(result.filePaths[0]!);
+      opts.projects.add(cwd); // record for the project tree + launch restore
       return ok({ cwd, trust: opts.getWorkspace().trust });
     });
   });
@@ -113,6 +116,39 @@ export function registerIpc(opts: {
       if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
       await opts.closeWorkspace();
       return ok({ closed: true });
+    });
+  });
+
+  // ── projects (saved workspaces + per-project session tree) ────────────────
+
+  ipcMain.handle("projects.list", async (event): Promise<Result<unknown>> => {
+    return wrap(() => {
+      if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
+      return ok({ projects: opts.projects.list() });
+    });
+  });
+
+  ipcMain.handle("projects.sessions", async (event): Promise<Result<unknown>> => {
+    return wrap(async () => {
+      if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
+      // Read-only metadata scan of app-owned session files; no trust needed.
+      return ok(await opts.projects.listSessions());
+    });
+  });
+
+  ipcMain.handle("projects.open", async (event, input): Promise<Result<unknown>> => {
+    return wrap(async () => {
+      if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
+      const cwd = (input as { cwd?: unknown } | undefined)?.cwd;
+      if (typeof cwd !== "string") return fail("invalid_input", "cwd required");
+      // Only saved projects can be reopened — the renderer selects among
+      // main-known paths; it never supplies arbitrary paths (§4.1).
+      if (!opts.projects.list().includes(cwd)) {
+        return fail("denied", "unknown project");
+      }
+      const real = await opts.openWorkspace(cwd);
+      opts.projects.add(real); // bump to most-recent
+      return ok({ cwd: real, trust: opts.getWorkspace().trust });
     });
   });
 

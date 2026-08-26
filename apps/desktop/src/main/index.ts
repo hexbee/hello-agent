@@ -10,6 +10,7 @@ import { PiAdapter } from "./agent/pi-adapter.js";
 import { canonicalize, type AgentHost, type AgentHostPaths } from "./agent/host.js";
 import { SafeStorageCredentialStore } from "./auth/credential-store.js";
 import { TrustStore } from "./trust-store.js";
+import { ProjectsStore } from "./projects-store.js";
 import type { AgentEvent } from "@hello-agent/shared";
 import { APPROVAL_TTL_MS } from "@hello-agent/shared";
 import { registerIpc, type WorkspaceState } from "./ipc/register.js";
@@ -164,6 +165,8 @@ app.whenReady().then(async () => {
   // §4.5 watchdog — ADR mitigation: stalled agent → failed + abort.
   host.watchdogTimeoutMs = 180_000;
   const auditSink = createAuditSink(host.paths.auditFile);
+  // Opened projects, persisted for launch-time restore + per-project session tree.
+  const projectsStore = new ProjectsStore(join(dataDir(), "projects.json"), host.paths.sessionsDir);
   const permissions = new PermissionManager({
     getTrust: () => workspace.trust,
     getCwd: () => workspace.cwd,
@@ -218,6 +221,7 @@ app.whenReady().then(async () => {
     },
     getAdapter: () => adapter,
     auditFile: host.paths.auditFile,
+    projects: projectsStore,
   });
 
   createWindow();

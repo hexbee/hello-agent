@@ -2,6 +2,7 @@
 // snapshot replay, with sequence-gap detection → agent.snapshot recovery.
 
 import type { AgentEvent, AgentSnapshot, SafePreview } from "@hello-agent/shared";
+import type { ProjectSessions } from "../preload/index";
 import { useSyncExternalStore } from "react";
 import { api, unwrap } from "./api";
 
@@ -62,9 +63,42 @@ export type StoreState = {
   authState: AgentSnapshot["authState"];
   authProviders: AgentSnapshot["authProviders"];
   forkCandidates: Array<{ entryId: string; text: string }>;
+  /** 已打开过的项目及其会话（侧边栏项目树数据源）。 */
+  projects: ProjectSessions[];
   banner: { kind: "error" | "info"; text: string } | null;
   authDialogOpen: boolean;
 };
+
+// ── thinking 耗时持久化（localStorage）─────────────────────────────────
+// 快照回放无法恢复混合消息（thinking+text）的思考耗时：thinking 块在
+// JSONL 里没有独立时间戳，adapter 只对 thinking-only 消息给出 durationSec。
+// live 阶段结算的真实耗时持久化到这里（keyed by messageId；快照 messageId
+// 由 append-only 会话文件的 sessionId+ordinal 组成，跨重启稳定），
+// 切换会话/重启后回填，摘要不再回退成「推理过程」。
+
+const DURATION_STORE_KEY = "hello-agent:thinking-durations";
+
+type DurationMap = Record<string, number>;
+
+function loadDurations(): DurationMap {
+  try {
+    return JSON.parse(localStorage.getItem(DURATION_STORE_KEY) ?? "{}") as DurationMap;
+  } catch {
+    return {};
+  }
+}
+
+function persistDuration(id: string, sec: number): void {
+  if (!Number.isFinite(sec)) return;
+  try {
+    const map = loadDurations();
+    if (map[id] === sec) return;
+    map[id] = Math.round(sec * 10) / 10;
+    localStorage.setItem(DURATION_STORE_KEY, JSON.stringify(map));
+  } catch {
+    /* storage 不可用时静默 */
+  }
+}
 
 const initialState: StoreState = {
   phase: "gate",
@@ -80,6 +114,7 @@ const initialState: StoreState = {
   authState: { configured: false, provider: null, maskedHint: null },
   authProviders: [],
   forkCandidates: [],
+  projects: [],
   banner: null,
   authDialogOpen: false,
 };
@@ -123,6 +158,22 @@ class Store {
     api().events.subscribe((raw) => this.applyEvent(raw as AgentEvent));
     // Restore an in-progress workspace after reload (§6.3 snapshot recovery).
     await this.tryRestoreWorkspace();
+    // 无进行中工作区时：有历史项目则直接进入最近的项目（跳过打开文件夹门）。
+    if (this.state.phase === "gate" && !this.state.cwd) {
+      await this.autoEnter();
+    }
+  }
+
+  /** 启动时若有已保存项目：载入项目树并自动打开最近的项目。 */
+  private async autoEnter(): Promise<void> {
+    try {
+      await this.refreshProjectSessions();
+      const latest = this.state.projects[0]?.cwd;
+      if (!latest) return; // 首次使用，留在 gate
+      await this.openProject(latest);
+    } catch {
+      /* 保持 gate */
+    }
   }
 
   async openWorkspace(): Promise<void> {
@@ -152,6 +203,8 @@ class Store {
       this.seqStarted = false;
       this.state = { ...initialState };
       for (const l of this.listeners) l();
+      // 项目记录在 Main 持久化，重拉以便 gate 仍可展示项目树入口。
+      await this.refreshProjectSessions();
     }
   }
 
@@ -187,6 +240,45 @@ class Store {
       this.set({ sessions });
     } catch (e) {
       console.warn("[sessions] 刷新失败:", e);
+    }
+    // 项目树里的会话列表一并刷新（其他项目 + 当前项目）。
+    await this.refreshProjectSessions();
+  }
+
+  /** 拉取所有已保存项目及其会话（侧边栏项目树）。 */
+  async refreshProjectSessions(): Promise<void> {
+    try {
+      const fresh = unwrap(await api().projects.sessions());
+      // 主进程按「最近使用」排序，切项目会把它挪到最前；侧边栏不应随之
+      // 跳动，因此沿用已有显示顺序，仅把新出现的项目追加到末尾。
+      const prev = this.state.projects;
+      const byPath = new Map(fresh.map((p) => [p.cwd, p]));
+      const merged = prev
+        .filter((p) => byPath.has(p.cwd))
+        .map((p) => byPath.get(p.cwd)!);
+      for (const p of fresh) {
+        if (!merged.some((q) => q.cwd === p.cwd)) merged.push(p);
+      }
+      this.set({ projects: merged });
+    } catch (e) {
+      console.warn("[projects] 刷新失败:", e);
+    }
+  }
+
+  /** 切换到已保存的项目（不走文件夹选择器）；未授权信任时落到 gate 选择信任级别。 */
+  async openProject(cwd: string): Promise<void> {
+    try {
+      const r = unwrap(await api().projects.open(cwd));
+      this.set({ cwd: r.cwd, trust: r.trust as TrustLevel });
+      if (r.trust === "untrusted") {
+        this.set({ phase: "gate" });
+        return;
+      }
+      await this.refreshSnapshot();
+      this.set({ phase: "ready" });
+      await this.refreshSessions();
+    } catch (e) {
+      this.set({ banner: { kind: "error", text: String(e) } });
     }
   }
 
@@ -257,6 +349,10 @@ class Store {
       })),
     ].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
 
+    // 持久化的思考耗时：快照只对 thinking-only 消息给出 durationSec，
+    // 混合消息（thinking+text）从这里回填 live 阶段结算的真实值。
+    const savedDurations = loadDurations();
+
     const toEntry = (s: SnapEntry): ChatEntry =>
       s.kind === "message"
         ? {
@@ -266,7 +362,7 @@ class Store {
             text: s.text,
             thinking: s.thinking ?? null,
             streaming: false,
-            durationSec: s.durationSec,
+            durationSec: s.durationSec ?? savedDurations[s.messageId],
           }
         : {
             kind: "tool",
@@ -318,6 +414,7 @@ class Store {
               durationSec:
                 e.durationSec ??
                 s.durationSec ??
+                savedDurations[e.messageId] ??
                 (e.startedAt !== undefined
                   ? Math.max(0, (Date.now() - e.startedAt) / 1000)
                   : undefined),
@@ -423,34 +520,36 @@ class Store {
       case "thinking.delta": {
         this.updateEntry(
           (x): x is MessageItem => x.kind === "message" && x.messageId === e.messageId,
-          (m) =>
-            e.type === "message.delta"
-              ? {
-                  ...m,
-                  text: m.text + e.delta,
-                  // 首段正文到达即结算思考耗时：思考时长 ≈ 消息开始 → 首个正文
-                  // delta。等 message.finished 才结算会把正文生成时间也算进去
-                  //（短思考长回答时会显示成「思考了 11s」）。
-                  durationSec:
-                    m.durationSec ??
-                    (m.thinking && m.startedAt !== undefined
-                      ? Math.max(0, (Date.now() - m.startedAt) / 1000)
-                      : undefined),
-                }
-              : { ...m, thinking: (m.thinking ?? "") + e.delta },
+          (m) => {
+            if (e.type !== "message.delta") {
+              return { ...m, thinking: (m.thinking ?? "") + e.delta };
+            }
+            let durationSec = m.durationSec;
+            // 首段正文到达即结算思考耗时：思考时长 ≈ 消息开始 → 首个正文
+            // delta。等 message.finished 才结算会把正文生成时间也算进去
+            //（短思考长回答时会显示成「思考了 11s」）。
+            // 结算值同时持久化：快照回放无法恢复混合消息的思考耗时，
+            // 切换会话后从这里回填（见 applySnapshot）。
+            if (durationSec === undefined && m.thinking && m.startedAt !== undefined) {
+              durationSec = Math.max(0, (Date.now() - m.startedAt) / 1000);
+              persistDuration(m.messageId, durationSec);
+            }
+            return { ...m, text: m.text + e.delta, durationSec };
+          },
         );
         break;
       }
       case "message.finished": {
         this.updateEntry(
           (x): x is MessageItem => x.kind === "message" && x.messageId === e.messageId,
-          (m) => ({
-            ...m,
-            streaming: false,
-            ...(m.startedAt && m.durationSec === undefined
-              ? { durationSec: Math.max(0, (Date.now() - m.startedAt) / 1000) }
-              : {}),
-          }),
+          (m) => {
+            let durationSec = m.durationSec;
+            if (durationSec === undefined && m.startedAt) {
+              durationSec = Math.max(0, (Date.now() - m.startedAt) / 1000);
+              persistDuration(m.messageId, durationSec);
+            }
+            return { ...m, streaming: false, durationSec };
+          },
         );
         break;
       }
