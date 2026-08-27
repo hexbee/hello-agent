@@ -116,7 +116,7 @@ export function SessionSidebar() {
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden px-2">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2">
         {items.length === 0 ? (
           <p className="px-2 py-4 text-xs text-muted-foreground">暂无项目，点击「项目」打开文件夹</p>
         ) : (

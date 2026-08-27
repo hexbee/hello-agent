@@ -34,6 +34,7 @@ export interface CodeBlockProps {
   language?: AgentCodeLanguage;
   filename?: ReactNode;
   status?: CodeBlockStatus;
+  defaultOpen?: boolean;
   showLineNumbers?: boolean;
   highlightLines?: number[];
   maxHeight?: number;
@@ -48,6 +49,7 @@ export function CodeBlock({
   language = "typescript",
   filename,
   status = "complete",
+  defaultOpen = true,
   showLineNumbers = true,
   highlightLines = [],
   maxHeight = 280,
@@ -64,7 +66,7 @@ export function CodeBlock({
   const previousStatus = useRef(status);
   const copyTimer = useRef<number | undefined>(undefined);
   const [copied, setCopied] = useState(false);
-  const [internalOpen, setInternalOpen] = useState(true);
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
   const currentOpen = internalOpen;
   const streaming = status === "streaming";
   const tokens = useAgentCodeTokens(code, language);

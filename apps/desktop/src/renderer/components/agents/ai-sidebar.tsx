@@ -643,6 +643,16 @@ export function AISidebar({
     return () => cancelAnimationFrame(frame);
   }, [menuOpenId]);
 
+  // 激活行变化（如新建会话后列表末尾新增）时滚入视野；
+  // block: nearest —— 已在可视区内则不动，只有视野外才滚动。
+  useEffect(() => {
+    if (!selectedId) return;
+    const frame = requestAnimationFrame(() => {
+      rowRefs.current.get(selectedId)?.scrollIntoView({ block: "nearest" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedId]);
+
   const updateItems = useCallback(
     (next: SidebarResource[]) => {
       setInternalItems(next);

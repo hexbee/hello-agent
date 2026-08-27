@@ -189,6 +189,7 @@ function ToolCard({ t }: { t: ToolItem }) {
         language={filename ? languageOf(filename) : "text"}
         copyText={t.patch.text}
         maxHeight={260}
+        defaultOpen={false}
       />
     );
   }
@@ -204,6 +205,7 @@ function ToolCard({ t }: { t: ToolItem }) {
         language={languageOf(filename)}
         status={running ? "streaming" : "complete"}
         maxHeight={260}
+        defaultOpen={running}
       />
     );
   }
@@ -231,6 +233,7 @@ function ToolCard({ t }: { t: ToolItem }) {
       status={status}
       meta={meta}
       copyText={body || undefined}
+      defaultOpen={running}
     >
       {body && <ToolResultOutput>{body}</ToolResultOutput>}
       {t.patch && <ToolResultOutput language="diff">{t.patch.text}</ToolResultOutput>}
