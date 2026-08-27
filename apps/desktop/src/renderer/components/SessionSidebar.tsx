@@ -116,7 +116,10 @@ export function SessionSidebar() {
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2">
+      {/* relative：滚动容器成为内部绝对定位元素（AISidebar 的 sr-only 无障碍
+          播报区等）的包含块，避免其以 ICB 定位逃出 overflow 裁剪，把整个
+          文档撑出多余的右侧滚动条。 */}
+      <div className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2">
         {items.length === 0 ? (
           <p className="px-2 py-4 text-xs text-muted-foreground">暂无项目，点击「项目」打开文件夹</p>
         ) : (

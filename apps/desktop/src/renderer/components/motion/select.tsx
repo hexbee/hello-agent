@@ -385,7 +385,9 @@ export function SelectContent({ className, children }: SelectContentProps) {
         variants={ctx.reduce ? undefined : LIST_VARIANTS}
         initial={false}
         animate={open ? "show" : "hidden"}
-        className="p-1"
+        // 选项可能很长（模型选择器是 pi 全量 registry，上百项）：封顶高度并
+        // 内部滚动，否则面板会撑到数千像素高，打开时页面出现巨型滚动条。
+        className="max-h-[min(20rem,50vh)] overflow-y-auto p-1"
       >
         {children}
       </motion.div>
