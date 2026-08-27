@@ -1,6 +1,10 @@
 import { store, useStore } from "../store";
 import { AuthDialog } from "./AuthDialog";
 import { ChatView } from "./ChatView";
+import {
+  AnimatedSidebarInset,
+  AnimatedSidebarProvider,
+} from "./motion/animated-sidebar";
 import { SessionSidebar } from "./SessionSidebar";
 import { TopBar } from "./TopBar";
 import { WorkspaceGate } from "./WorkspaceGate";
@@ -31,9 +35,12 @@ export function App() {
       {s.phase === "gate" ? (
         <WorkspaceGate />
       ) : (
-        <div className="flex min-h-0 flex-1">
+        <AnimatedSidebarProvider
+          defaultSidebarWidth={240}
+          className="min-h-0 flex-1"
+        >
           <SessionSidebar />
-          <div className="flex min-w-0 flex-1 flex-col">
+          <AnimatedSidebarInset>
             <TopBar />
             {s.agentState === "failed" && (
               <div className="flex items-center justify-between border-b border-danger/30 bg-danger/10 px-4 py-1.5 text-xs text-danger">
@@ -50,8 +57,8 @@ export function App() {
                 复位 MessageScroller 的跟随状态与滚动位置，
                 避免旧会话遗留的「回到底部」按钮出现在新会话页。 */}
             <ChatView key={s.session?.id ?? "none"} />
-          </div>
-        </div>
+          </AnimatedSidebarInset>
+        </AnimatedSidebarProvider>
       )}
 
       <AuthDialog />

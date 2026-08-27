@@ -42,6 +42,13 @@ type SidebarCollapsible = "offcanvas" | "icon" | "none";
 const MOBILE_QUERY = "(max-width: 767px)";
 const SIDEBAR_KEYBOARD_SHORTCUT = "b";
 
+function parseCssLength(value: string | undefined): number {
+  if (!value) return 256;
+  if (value.endsWith("rem")) return Math.round(parseFloat(value) * 16);
+  if (value.endsWith("px")) return Math.round(parseFloat(value));
+  return 256;
+}
+
 const PANEL_TRANSITION = {
   duration: 0.36,
   ease: EASE_DRAWER,
@@ -55,6 +62,20 @@ const SIDEBAR_MORPH_TRANSITION = {
   stiffness: 380,
   damping: 35,
   mass: 0.75,
+} as const;
+
+// Drag-resize bounds for the edge handle, in px (13rem … 36rem).
+const MIN_SIDEBAR_WIDTH = 208;
+const MAX_SIDEBAR_WIDTH = 576;
+
+// While a drag is in flight the width must track the pointer 1:1, so the
+// spring that normally settles collapsed/expanded gives way to an instant
+// transition. The inner panel gets a short linear one instead, so offcanvas
+// content fades in without lagging behind the handle.
+const RESIZE_TRANSITION = { duration: 0 } as const;
+const PANEL_RESIZE_TRANSITION = {
+  duration: 0.1,
+  ease: "linear",
 } as const;
 
 const LABEL_ENTER_TRANSITION = {
@@ -157,6 +178,9 @@ interface AnimatedSidebarContextValue {
   state: SidebarState;
   toggleSidebar: () => void;
   triggerRef: React.RefObject<HTMLButtonElement | null>;
+  sidebarWidth: number;
+  setSidebarWidth: (width: number) => void;
+  resetSidebarWidth: () => void;
 }
 
 const AnimatedSidebarContext =
@@ -205,6 +229,8 @@ export interface AnimatedSidebarProviderProps
   openMobile?: boolean;
   defaultOpenMobile?: boolean;
   onOpenMobileChange?: (open: boolean) => void;
+  /** Expanded width in px; defaults to the `--sidebar-width` css var (256px). */
+  defaultSidebarWidth?: number;
   style?: SidebarProviderStyle;
 }
 
@@ -216,6 +242,7 @@ export function AnimatedSidebarProvider({
   openMobile,
   defaultOpenMobile = false,
   onOpenMobileChange,
+  defaultSidebarWidth,
   className,
   style,
   ...props
@@ -229,6 +256,14 @@ export function AnimatedSidebarProvider({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const desktopOpen = open ?? internalOpen;
   const mobileOpen = openMobile ?? internalOpenMobile;
+  const initialSidebarWidth = useRef(
+    defaultSidebarWidth ?? parseCssLength(style?.["--sidebar-width"]),
+  );
+  const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth.current);
+  const resetSidebarWidth = useCallback(
+    () => setSidebarWidth(initialSidebarWidth.current),
+    [],
+  );
 
   const setOpen = useCallback(
     (nextOpen: boolean) => {
@@ -279,6 +314,9 @@ export function AnimatedSidebarProvider({
         state: desktopOpen ? "expanded" : "collapsed",
         toggleSidebar,
         triggerRef,
+        sidebarWidth,
+        setSidebarWidth,
+        resetSidebarWidth,
       }}
     >
       <div
@@ -286,13 +324,16 @@ export function AnimatedSidebarProvider({
         data-slot="sidebar-wrapper"
         data-state={desktopOpen ? "expanded" : "collapsed"}
         style={{
-          "--sidebar-width": "16rem",
+          // State drives the expanded width (seeded from `style["--sidebar-width"]`
+          // or `defaultSidebarWidth` above), so drag-resize and collapse/expand
+          // share one source of truth.
+          ...style,
+          "--sidebar-width": `${sidebarWidth}px`,
           "--sidebar-width-icon": "4.25rem",
           "--sidebar-width-mobile": "18rem",
-          ...style,
-        }}
+        } as SidebarProviderStyle}
         className={cn(
-          "group/sidebar-wrapper flex min-h-svh w-full min-w-0",
+          "group/sidebar-wrapper flex min-h-0 w-full min-w-0",
           className,
         )}
       >
@@ -499,6 +540,8 @@ export interface AnimatedSidebarProps
   collapsible?: SidebarCollapsible;
   ariaLabel?: string;
   panelClassName?: string;
+  /** Show an edge handle that drags to resize (click toggles collapsed). */
+  resizable?: boolean;
 }
 
 export const AnimatedSidebar = forwardRef<HTMLElement, AnimatedSidebarProps>(
@@ -511,6 +554,7 @@ export const AnimatedSidebar = forwardRef<HTMLElement, AnimatedSidebarProps>(
       children,
       className,
       panelClassName,
+      resizable = false,
       style,
       ...props
     },
@@ -523,7 +567,115 @@ export const AnimatedSidebar = forwardRef<HTMLElement, AnimatedSidebarProps>(
       ? "0px"
       : collapsed
         ? "var(--sidebar-width-icon)"
-        : "var(--sidebar-width)";
+        : `${context.sidebarWidth}px`;
+    const [resizing, setResizing] = useState(false);
+    const resizeGesture = useRef<{
+      pointerId: number;
+      startX: number;
+      startWidth: number;
+      moved: boolean;
+    } | null>(null);
+
+    const clampWidth = useCallback(
+      (candidate: number) =>
+        Math.min(
+          MAX_SIDEBAR_WIDTH,
+          Math.max(MIN_SIDEBAR_WIDTH, candidate),
+        ),
+      [],
+    );
+
+    const beginResize = (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      resizeGesture.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        // A drag that begins collapsed grows the panel from zero under the
+        // pointer instead of jumping to the last expanded width.
+        startWidth: collapsed ? 0 : context.sidebarWidth,
+        moved: false,
+      };
+      // Keep long label text from being selected while the pointer sweeps
+      // across the panel.
+      document.body.style.userSelect = "none";
+    };
+
+    const moveResize = (event: React.PointerEvent<HTMLDivElement>) => {
+      const gesture = resizeGesture.current;
+      if (!gesture || gesture.pointerId !== event.pointerId) return;
+      const delta =
+        side === "left"
+          ? event.clientX - gesture.startX
+          : gesture.startX - event.clientX;
+      if (!gesture.moved && Math.abs(delta) > 3) {
+        gesture.moved = true;
+        setResizing(true);
+        document.body.style.cursor = "col-resize";
+        // Dragging from the collapsed edge re-opens the panel at the width
+        // under the pointer (the VS Code behaviour).
+        if (collapsed) context.setOpen(true);
+      }
+      if (gesture.moved) {
+        context.setSidebarWidth(
+          // While growing from zero the pointer is the only limit; widths under
+          // the minimum are only reached mid-drag and snap up on release.
+          Math.min(
+            MAX_SIDEBAR_WIDTH,
+            Math.max(gesture.startWidth === 0 ? 0 : MIN_SIDEBAR_WIDTH, gesture.startWidth + delta),
+          ),
+        );
+      }
+    };
+
+    const endResize = (event: React.PointerEvent<HTMLDivElement>) => {
+      const gesture = resizeGesture.current;
+      if (!gesture || gesture.pointerId !== event.pointerId) return;
+      resizeGesture.current = null;
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      if (gesture.moved) {
+        setResizing(false);
+        if (gesture.startWidth === 0 && context.sidebarWidth < MIN_SIDEBAR_WIDTH) {
+          context.setSidebarWidth(MIN_SIDEBAR_WIDTH);
+        }
+      } else {
+        // A press without movement is a click: toggle like the rail does.
+        context.toggleSidebar();
+      }
+    };
+
+    const cancelResize = (event: React.PointerEvent<HTMLDivElement>) => {
+      const gesture = resizeGesture.current;
+      if (!gesture || gesture.pointerId !== event.pointerId) return;
+      resizeGesture.current = null;
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      setResizing(false);
+    };
+
+    const resizeBy = (delta: number) => {
+      if (collapsed) context.setOpen(true);
+      context.setSidebarWidth(clampWidth(context.sidebarWidth + delta));
+    };
+
+    const onResizeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const step = 16;
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        resizeBy(side === "left" ? step : -step);
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        resizeBy(side === "left" ? -step : step);
+      } else if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        context.toggleSidebar();
+      }
+    };
 
     if (context.isMobile) {
       return (
@@ -550,7 +702,11 @@ export const AnimatedSidebar = forwardRef<HTMLElement, AnimatedSidebarProps>(
         data-side={side}
         animate={{ width }}
         transition={
-          context.reduce ? { duration: 0 } : SIDEBAR_MORPH_TRANSITION
+          resizing
+            ? RESIZE_TRANSITION
+            : context.reduce
+              ? { duration: 0 }
+              : SIDEBAR_MORPH_TRANSITION
         }
         style={style}
         className={cn(
@@ -567,7 +723,11 @@ export const AnimatedSidebar = forwardRef<HTMLElement, AnimatedSidebarProps>(
             x: offcanvas ? (side === "left" ? "-100%" : "100%") : "0%",
           }}
           transition={
-            context.reduce ? REDUCED_TRANSITION : PANEL_TRANSITION
+            resizing
+              ? PANEL_RESIZE_TRANSITION
+              : context.reduce
+                ? REDUCED_TRANSITION
+                : PANEL_TRANSITION
           }
           className={cn(
             "sticky top-0 flex h-svh w-full flex-col overflow-hidden bg-background",
@@ -586,6 +746,44 @@ export const AnimatedSidebar = forwardRef<HTMLElement, AnimatedSidebarProps>(
             {children}
           </AnimatedSidebarPanelContext.Provider>
         </motion.div>
+
+        {resizable ? (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+            title={
+              collapsed
+                ? "Drag to reopen, click to expand"
+                : "Drag to resize, click to collapse, double-click to reset"
+            }
+            tabIndex={0}
+            onPointerDown={beginResize}
+            onPointerMove={moveResize}
+            onPointerUp={endResize}
+            onPointerCancel={cancelResize}
+            onLostPointerCapture={cancelResize}
+            onKeyDown={onResizeKeyDown}
+            onDoubleClick={() => {
+              if (collapsed) context.setOpen(true);
+              context.resetSidebarWidth();
+            }}
+            className={cn(
+              "absolute inset-y-0 z-30 hidden w-2 touch-none select-none outline-none md:block",
+              "cursor-col-resize",
+              // When collapsed the aside is zero-width; sit the handle fully
+              // inside the window edge so it stays grabbable.
+              collapsed
+                ? "left-0"
+                : side === "left"
+                  ? "right-0 translate-x-1/2"
+                  : "left-0 -translate-x-1/2",
+              "after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors",
+              "hover:after:bg-border focus-visible:after:bg-accent",
+              resizing && "after:bg-accent",
+            )}
+          />
+        ) : null}
       </motion.aside>
     );
   },
@@ -712,7 +910,7 @@ export const AnimatedSidebarInset = forwardRef<
       ref={forwardedRef}
       data-slot="sidebar-inset"
       className={cn(
-        "relative flex min-h-svh min-w-0 flex-1 flex-col bg-background",
+        "relative flex min-h-0 min-w-0 flex-1 flex-col bg-background",
         "md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-2xl md:peer-data-[variant=inset]:shadow-sm",
         className,
       )}

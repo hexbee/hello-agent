@@ -269,8 +269,6 @@ export function AISidebarPreview() {
 }
 ```
 
-## API Reference
-
 ### AISidebar
 
 | Prop | Type | Default | Required | Description |
@@ -289,6 +287,14 @@ export function AISidebarPreview() {
 | `renderMenu` | `((item: SidebarResource, controls: SidebarResourceMenuControls) => ReactNode)` | — | No | — |
 | `ariaLabel` | `string` | `Resources` | No | — |
 | `className` | `string` | — | No | — |
+
+## Collapse & resize
+
+`AnimatedSidebar` collapses via `collapsible` (`offcanvas` | `icon` | `none`) and supports drag-resize with the `resizable` prop:
+
+- **Toggle**: `AnimatedSidebarTrigger` (a `PanelLeft` button in the header) or the global `⌘/Ctrl + B` shortcut.
+- **Resize**: drag the edge handle (click it to toggle, double-click to reset to the default width). Width clamps between `13rem` and `36rem`; dragging from the collapsed edge re-opens the sidebar at the pointer width. `ArrowLeft` / `ArrowRight` resize by 16px when the handle is focused.
+- **Width state**: `AnimatedSidebarProvider` takes `defaultSidebarWidth` (px, default `256`) and exposes `sidebarWidth` / `setSidebarWidth` / `resetSidebarWidth` through `useAnimatedSidebar`.
 
 ## Source
 
