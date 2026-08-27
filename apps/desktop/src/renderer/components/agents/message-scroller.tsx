@@ -19,6 +19,11 @@ import { cn } from "@/lib/utils";
 const PREVIEW_TITLE_LENGTH = 56;
 const PREVIEW_DESCRIPTION_LENGTH = 88;
 
+// rail 专用车道宽度：无论内容是否溢出都常驻预留（等同 scrollbar-gutter: stable
+// 的思路），rail 出现/消失只切换 overlay，布局零变化——内容超过一页时页面
+// 不会左右偏移。ChatView 的输入区也引用它，保证与消息列始终对齐。
+export const RAIL_LANE_PADDING = "pr-10";
+
 function truncateMessageText(text: string, limit: number) {
   if (text.length <= limit) return text;
   const excerpt = text.slice(0, limit);
@@ -434,7 +439,8 @@ export function MessageScroller({
           ? "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           : "[scrollbar-gutter:stable]",
         viewportClassName,
-        navigation === "rail" && railOverflowing && "pr-10",
+        // 车道常驻预留，不随 railOverflowing 变化。
+        navigation === "rail" && RAIL_LANE_PADDING,
       )}
     >
       <div

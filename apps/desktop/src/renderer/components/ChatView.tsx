@@ -6,7 +6,8 @@ import { FileDiff, type FileDiffLine } from "./agents/file-diff";
 import { AgentActivity, type AgentActivityItem } from "./agents/agent-activity";
 import { ThinkingShimmer } from "./agents/loading-states/thinking-shimmer";
 import { ToolResult, ToolResultOutput } from "./agents/tool-result";
-import { MessageScroller } from "./agents/message-scroller";
+import { MessageScroller, RAIL_LANE_PADDING } from "./agents/message-scroller";
+import { cn } from "@/lib/utils";
 import type { ChatEntry, MessageItem, ToolItem } from "../store";
 import { store, useStore } from "../store";
 import { ApprovalStack } from "./ApprovalStack";
@@ -335,7 +336,8 @@ export function ChatView() {
         )}
       </div>
 
-      <div className="mx-auto w-full max-w-3xl px-6">
+      {/* 与消息滚动区共用同一车道预留：输入区与消息列在任意溢出状态下都对齐 */}
+      <div className={cn("mx-auto w-full max-w-3xl px-6", RAIL_LANE_PADDING)}>
         <ApprovalStack />
         <Composer />
       </div>
