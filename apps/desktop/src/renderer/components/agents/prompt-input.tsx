@@ -23,6 +23,7 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroupLabel,
   SelectItem,
   SelectTrigger,
 } from "@/components/motion/select";
@@ -34,6 +35,8 @@ export interface PromptModel {
   label: ReactNode;
   icon?: ReactNode;
   disabled?: boolean;
+  /** 分组标题（如 provider 名）；同 group 的选项渲染在同一分组下。 */
+  group?: string;
 }
 
 export interface PromptMode {
@@ -77,6 +80,28 @@ export interface PromptInputProps extends Omit<
   maxRows?: number;
   leadingAction?: ReactNode;
   className?: string;
+}
+
+interface ModelSection {
+  group?: string;
+  options: PromptModel[];
+}
+
+/** 把模型按 group（provider）聚合成分段，保持原顺序；无 group 的归为无标题段。 */
+function groupModels(models: PromptModel[]): ModelSection[] {
+  const sections: ModelSection[] = [];
+  const byGroup = new Map<string, ModelSection>();
+  for (const option of models) {
+    const key = option.group ?? "";
+    let section = byGroup.get(key);
+    if (!section) {
+      section = { group: key || undefined, options: [] };
+      byGroup.set(key, section);
+      sections.push(section);
+    }
+    section.options.push(option);
+  }
+  return sections;
 }
 
 export function PromptInput({
@@ -355,6 +380,8 @@ export function PromptInput({
             onValueChange={setModel}
             disabled={disabled || loading}
             className="min-w-0"
+            searchable
+            searchPlaceholder="搜索模型…"
           >
             <SelectTrigger className="h-8 w-auto max-w-52 rounded-xl border-0 bg-transparent px-2 py-0 text-xs hover:bg-muted focus-visible:ring-2">
               <span className="flex min-w-0 items-center gap-1.5">
@@ -368,26 +395,39 @@ export function PromptInput({
                 </span>
               </span>
             </SelectTrigger>
-            <SelectContent className="right-auto w-52 shadow-none">
-              {models.map((option) => (
-                <SelectItem
-                  key={option.value}
-                  value={option.value}
-                  disabled={option.disabled}
-                  className="py-2"
-                >
-                  <span className="flex min-w-0 items-center gap-2">
-                    {option.icon ? (
-                      <span className="grid size-5 shrink-0 place-items-center text-muted-foreground [&_svg]:size-4">
-                        {option.icon}
+            <SelectContent className="right-auto w-80 shadow-none">
+              {groupModels(models).flatMap((section) => [
+                section.group
+                  ? (<SelectGroupLabel
+                      key={section.group}
+                      searchText={`${section.group} ${section.options
+                        .map((o) => `${o.value} ${String(o.label ?? "")}`)
+                        .join(" ")}`}
+                    >
+                      {section.group}
+                    </SelectGroupLabel>)
+                  : null,
+                ...section.options.map((option) => (
+                  <SelectItem
+                    key={option.value}
+                    value={option.value}
+                    disabled={option.disabled}
+                    searchText={`${option.value} ${String(option.label ?? "")}`}
+                    className="py-2"
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      {option.icon ? (
+                        <span className="grid size-5 shrink-0 place-items-center text-muted-foreground [&_svg]:size-4">
+                          {option.icon}
+                        </span>
+                      ) : null}
+                      <span className="min-w-0 truncate text-sm text-foreground">
+                        {option.label}
                       </span>
-                    ) : null}
-                    <span className="min-w-0 truncate text-sm text-foreground">
-                      {option.label}
                     </span>
-                  </span>
-                </SelectItem>
-              ))}
+                  </SelectItem>
+                )),
+              ])}
             </SelectContent>
           </Select>
         ) : null}

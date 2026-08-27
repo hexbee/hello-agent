@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Search } from "lucide-react";
 import {
   motion,
   type Transition,
@@ -9,6 +9,7 @@ import {
 } from "motion/react";
 import {
   createContext,
+  Children,
   type ReactNode,
   useCallback,
   useContext,
@@ -53,9 +54,17 @@ interface SelectContextValue {
   disabled: boolean;
   placement: Placement;
   setPlacement: (p: Placement) => void;
+  searchable: boolean;
+  searchPlaceholder: string;
 }
 
 const SelectContext = createContext<SelectContextValue | null>(null);
+
+interface SelectFilterValue {
+  query: string;
+  reportVisible: (value: string, visible: boolean) => void;
+}
+const SelectFilterContext = createContext<SelectFilterValue | null>(null);
 
 function useSelectContext(component: string) {
   const ctx = useContext(SelectContext);
@@ -82,6 +91,9 @@ export interface SelectProps {
    */
   onOpenChange?: (open: boolean) => void;
   disabled?: boolean;
+  /** 选项列表上方渲染搜索框，按 label / value / searchText 过滤（适合模型选择器等长列表）。 */
+  searchable?: boolean;
+  searchPlaceholder?: string;
   className?: string;
   children: ReactNode;
 }
@@ -94,6 +106,8 @@ export function Select({
   defaultOpen = false,
   onOpenChange,
   disabled = false,
+  searchable = false,
+  searchPlaceholder = "搜索…",
   className,
   children,
 }: SelectProps) {
@@ -170,6 +184,8 @@ export function Select({
       disabled,
       placement,
       setPlacement,
+      searchable,
+      searchPlaceholder,
     }),
     [
       current,
@@ -183,6 +199,8 @@ export function Select({
       baseId,
       disabled,
       placement,
+      searchable,
+      searchPlaceholder,
     ],
   );
 
@@ -272,6 +290,37 @@ export function SelectValue({ placeholder, className }: SelectValueProps) {
   );
 }
 
+export interface SelectGroupLabelProps {
+  /** 组标题。 */
+  children: ReactNode;
+  /** 组内全部条目的可搜索文本（value/label/searchText 拼接），搜索时整组隐藏。 */
+  searchText?: string;
+  className?: string;
+}
+
+/** 不可交互的分组标题行。搜索过滤时若组内无匹配项则整组隐藏。 */
+export function SelectGroupLabel({
+  children,
+  searchText = "",
+  className,
+}: SelectGroupLabelProps) {
+  const filter = useContext(SelectFilterContext);
+  const q = (filter?.query ?? "").trim().toLowerCase();
+  const visible = !q || searchText.toLowerCase().includes(q);
+  if (!visible) return null;
+  return (
+    <li
+      aria-hidden="true"
+      className={cn(
+        "px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70",
+        className,
+      )}
+    >
+      {children}
+    </li>
+  );
+}
+
 export interface SelectContentProps {
   className?: string;
   children: ReactNode;
@@ -280,9 +329,39 @@ export interface SelectContentProps {
 export function SelectContent({ className, children }: SelectContentProps) {
   const ctx = useSelectContext("SelectContent");
   const innerRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const [height, setHeight] = useState(0);
+  const [query, setQuery] = useState("");
+  const visibleRef = useRef(new Set<string>());
+  const [visibleCount, setVisibleCount] = useState(0);
   const open = ctx.open;
   const { setPlacement } = ctx;
+
+  // 搜索框：打开时聚焦并清空上次的过滤；关闭时重置过滤，避免下次打开只见旧结果。
+  useEffect(() => {
+    if (open && ctx.searchable) {
+      searchRef.current?.focus();
+    } else if (!open) {
+      setQuery("");
+    }
+  }, [open, ctx.searchable]);
+
+  const reportVisible = useCallback((value: string, visible: boolean) => {
+    const set = visibleRef.current;
+    const had = set.has(value);
+    if (visible && !had) {
+      set.add(value);
+      setVisibleCount(set.size);
+    } else if (!visible && had) {
+      set.delete(value);
+      setVisibleCount(set.size);
+    }
+  }, []);
+
+  const filter = useMemo<SelectFilterValue>(
+    () => ({ query, reportVisible }),
+    [query, reportVisible],
+  );
 
   useLayoutEffect(() => {
     const node = innerRef.current;
@@ -314,6 +393,13 @@ export function SelectContent({ className, children }: SelectContentProps) {
   const isTop = ctx.placement === "top";
   const nearGap = open ? 8 : 0;
   const nearRadius = open ? 12 : 0;
+
+  // 长列表（模型选择器数百项）时逐项 stagger 会让尾部条目延迟十几秒才
+  // 出现；超过阈值直接关闭 stagger，所有条目同帧渲染。
+  const listVariants = useMemo<Variants | undefined>(() => {
+    const count = Children.count(children);
+    return count > 32 ? undefined : LIST_VARIANTS;
+  }, [children]);
 
   const gapT: Transition = open
     ? { type: "spring", duration: 0.6, bounce: 0.5, delay: 0.12 }
@@ -382,14 +468,49 @@ export function SelectContent({ className, children }: SelectContentProps) {
     >
       <motion.div
         ref={innerRef}
-        variants={ctx.reduce ? undefined : LIST_VARIANTS}
+        variants={ctx.reduce ? undefined : listVariants}
         initial={false}
         animate={open ? "show" : "hidden"}
         // 选项可能很长（模型选择器是 pi 全量 registry，上百项）：封顶高度并
         // 内部滚动，否则面板会撑到数千像素高，打开时页面出现巨型滚动条。
         className="max-h-[min(20rem,50vh)] overflow-y-auto p-1"
       >
-        {children}
+        <SelectFilterContext.Provider value={filter}>
+          {ctx.searchable ? (
+            <div className="sticky top-0 z-10 -mx-1 -mt-1 mb-1 border-b border-border/60 bg-background p-1.5">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  ref={searchRef}
+                  type="text"
+                  value={query}
+                  placeholder={ctx.searchPlaceholder}
+                  aria-label={ctx.searchPlaceholder}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      // PromptInput 外包了 form：拦截 Enter，避免搜索时误提交对话。
+                      event.preventDefault();
+                      event.stopPropagation();
+                    } else if (event.key === "Escape" && query) {
+                      // 有输入时先清空，其次才关闭面板。
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setQuery("");
+                    }
+                  }}
+                  className="h-7 w-full rounded-lg bg-muted/60 pl-7 pr-2 text-xs text-foreground outline-none placeholder:text-muted-foreground/55 focus:bg-muted/80 focus-visible:ring-2 focus-visible:ring-foreground/15"
+                />
+              </div>
+            </div>
+          ) : null}
+          {children}
+          {query.trim() !== "" && visibleCount === 0 ? (
+            <div className="px-2.5 py-3 text-center text-xs text-muted-foreground">
+              无匹配结果
+            </div>
+          ) : null}
+        </SelectFilterContext.Provider>
       </motion.div>
     </motion.div>
   );
@@ -399,6 +520,8 @@ export interface SelectItemProps {
   value: string;
   disabled?: boolean;
   className?: string;
+  /** 附加的可搜索文本（children 为 ReactNode 时，按 value + searchText 匹配）。 */
+  searchText?: string;
   children: ReactNode;
 }
 
@@ -406,16 +529,29 @@ export function SelectItem({
   value,
   disabled = false,
   className,
+  searchText,
   children,
 }: SelectItemProps) {
   const ctx = useSelectContext("SelectItem");
+  const filter = useContext(SelectFilterContext);
   const selected = ctx.value === value;
   const label = typeof children === "string" ? children : value;
+
+  const q = (filter?.query ?? "").trim().toLowerCase();
+  const haystack = `${value} ${label} ${searchText ?? ""}`.toLowerCase();
+  const visible = !q || haystack.includes(q);
 
   useLayoutEffect(() => {
     ctx.register(value, label);
     return () => ctx.unregister(value);
   }, [ctx.register, ctx.unregister, value, label]);
+
+  // 上报可见性，SelectContent 据此判断「无匹配结果」。
+  useEffect(() => {
+    filter?.reportVisible(value, visible);
+  }, [filter, value, visible]);
+
+  if (!visible) return null;
 
   return (
     <motion.li variants={ctx.reduce ? undefined : ITEM_VARIANTS}>

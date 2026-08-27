@@ -415,7 +415,8 @@ export class PiAdapter {
   async listModels(): Promise<AgentSnapshot["models"]> {
     if (!this.modelRuntime) throw new Error("no_runtime: workspace not open");
     const available = await this.modelRuntime.getAvailable();
-    return available.slice(0, 200).map((m) => ({
+    // 不再截断：全量目录给前端，前端按 provider 分组 + 搜索（长列表有滚动/搜索兜底）。
+    return available.map((m) => ({
       provider: m.provider ?? "",
       id: m.id,
       context: m.contextWindow ?? null,
@@ -425,7 +426,12 @@ export class PiAdapter {
   async selectModel(ref: string): Promise<string | null> {
     const session = this.requireSession();
     if (this.state === "running") throw new Error("busy: agent running");
-    const [provider, id] = ref.split("/");
+    // ref 形如 "provider/model-id"；model id 本身可含斜杠（如 OpenRouter 的
+    // "~anthropic/claude-fable-latest"、"z-ai/glm-5.2:free"），因此只按第一个
+    // 斜杠切分，其余全部属于 model id。
+    const sep = ref.indexOf("/");
+    const provider = sep === -1 ? "" : ref.slice(0, sep);
+    const id = sep === -1 ? "" : ref.slice(sep + 1);
     const model: Model<Api> | undefined =
       provider && id ? this.modelRuntime!.getModel(provider, id) : undefined;
     if (!model) throw new Error(`model not found: ${ref}`);

@@ -31,6 +31,7 @@ export function Composer() {
     value: `${m.provider}/${m.id}`,
     label: `${m.id}`,
     icon: <Cpu />,
+    group: m.provider || undefined,
   }));
 
   const running = s.agentState === "running";

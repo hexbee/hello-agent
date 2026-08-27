@@ -25,11 +25,15 @@ export function createIsolatedModelRuntime(
 ): Promise<ModelRuntime> {
   // §4.4: no authPath → no ~/.pi/agent/auth.json. §8: credentials go through
   // the app-owned store (safeStorage-backed in Electron; in-memory in probes).
+  // allowModelNetwork: 拉取 pi.dev 远程目录覆盖层（新模型自动出现；静态
+  // 快照之外的模型如 deepseek-v4-flash-vision-exp），etag 缓存 + 4h 间隔，
+  // 超时后回退静态内置目录，不阻塞启动。
   return ModelRuntime.create({
     credentials: credentials ?? new InMemoryCredentialStore(),
     modelsPath: paths.modelsPath,
     modelsStorePath: paths.modelsStorePath,
-    allowModelNetwork: false,
+    allowModelNetwork: true,
+    modelRefreshTimeoutMs: 20_000,
   });
 }
 
