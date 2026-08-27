@@ -46,7 +46,10 @@ export function App() {
                 </button>
               </div>
             )}
-            <ChatView />
+            {/* key 跟随会话 id：切换/新建会话时整体重挂载，
+                复位 MessageScroller 的跟随状态与滚动位置，
+                避免旧会话遗留的「回到底部」按钮出现在新会话页。 */}
+            <ChatView key={s.session?.id ?? "none"} />
           </div>
         </div>
       )}
