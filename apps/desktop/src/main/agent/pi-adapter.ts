@@ -747,6 +747,7 @@ export class PiAdapter {
       lastSequence: this.sequence,
       cwd: this.host.getCwd(),
       trust: this.host.getTrust(),
+      permissionMode: this.permissions.getMode(),
       session: {
         id: this.sessionId,
         file: this.session?.sessionFile,

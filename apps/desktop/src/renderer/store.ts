@@ -53,6 +53,8 @@ export type StoreState = {
   phase: "gate" | "ready";
   cwd: string;
   trust: TrustLevel;
+  /** 会话级权限模式：default 默认权限 / full 完全访问（Composer 模式按钮）。 */
+  permissionMode: "default" | "full";
   agentState: "idle" | "running" | "aborted" | "failed";
   entries: ChatEntry[];
   pendingApprovals: PendingApproval[];
@@ -104,6 +106,7 @@ const initialState: StoreState = {
   phase: "gate",
   cwd: "",
   trust: "untrusted",
+  permissionMode: "default",
   agentState: "idle",
   entries: [],
   pendingApprovals: [],
@@ -470,6 +473,7 @@ class Store {
       authProviders: snap.authProviders ?? this.state.authProviders,
       forkCandidates: snap.forkCandidates ?? [],
       trust: snap.trust,
+      permissionMode: snap.permissionMode ?? "default",
       cwd: snap.cwd || this.state.cwd,
     });
   }
@@ -804,6 +808,16 @@ class Store {
       this.set({ selectedModel: r.selected, banner: null });
     } catch (e) {
       this.set({ banner: { kind: "error", text: String(e) } });
+    }
+  }
+
+  /** 切换会话级权限模式（default 默认权限 / full 完全访问）。 */
+  async setPermissionMode(mode: "default" | "full"): Promise<void> {
+    try {
+      const r = unwrap(await api().permissions.setMode(mode));
+      this.set({ permissionMode: r.mode });
+    } catch (e) {
+      this.set({ banner: { kind: "error", text: `权限模式切换失败：${String(e)}` } });
     }
   }
 

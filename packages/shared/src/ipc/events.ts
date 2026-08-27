@@ -64,6 +64,8 @@ export type AgentSnapshot = {
   lastSequence: number;
   cwd: string;
   trust: "untrusted" | "restricted" | "trusted";
+  /** 会话级权限模式（Composer 模式选择）；旧会话文件/快照可能缺省 → 回退 "default"。 */
+  permissionMode?: "default" | "full";
   session: {
     id: string;
     file: string | undefined;

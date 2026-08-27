@@ -63,6 +63,14 @@ export interface PermissionManagerOptions {
   audit(record: AuditRecord): void;
 }
 
+/** 会话级权限模式：default = 默认权限（写操作走审批）；full = 完全访问（全部自动放行）。 */
+export type PermissionMode = "default" | "full";
+
+const MODE_LABEL: Record<PermissionMode, string> = {
+  default: "default permissions",
+  full: "full access",
+};
+
 let seq = 0;
 function nextId(prefix: string): string {
   return `${prefix}:${Date.now().toString(36)}:${(seq++).toString(36)}`;
@@ -72,6 +80,8 @@ export class PermissionManager {
   private pending = new Map<string, PendingEntry>();
   /** Session-scoped allow rules granted via approval dialog ("allow for session"). §7.1 */
   private sessionAllows = new Set<string>();
+  /** 会话级权限模式，随会话切换重置为 default（与 sessionAllows 同生命周期）。 */
+  private mode: PermissionMode = "default";
   /** Times the factory was instantiated (= sessions it guards). Probe hook. */
   bindCount = 0;
 
@@ -108,6 +118,13 @@ export class PermissionManager {
     if (this.opts.getTrust() === "untrusted") {
       audit("deny", "workspace untrusted");
       return { kind: "block", reason: "Workspace is not trusted" };
+    }
+
+    // 完全访问：所有工具（含写文件 / bash）自动放行，不弹审批；
+    // 审计记录保留（decision = auto-allow，reason 标注模式），便于事后追溯。
+    if (this.mode === "full") {
+      audit("auto-allow", MODE_LABEL.full);
+      return { kind: "pass" };
     }
 
     const readOnly = (READ_ONLY_TOOLS as readonly string[]).includes(event.toolName);
@@ -284,6 +301,20 @@ export class PermissionManager {
 
   resetSessionRules(): void {
     this.sessionAllows.clear();
+    // 会话切换：权限模式一并回到默认（完全访问不跨会话延续）。
+    this.mode = "default";
+  }
+
+  /** 会话级权限模式读写（Renderer 通过 permissions.setMode 调用）。 */
+  getMode(): PermissionMode {
+    return this.mode;
+  }
+
+  setMode(mode: PermissionMode): void {
+    if (mode !== "default" && mode !== "full") return; // 防御：非法值忽略
+    this.mode = mode;
+    // 切回默认权限时清掉会话内已记住的放行规则，避免「allow for session」残留。
+    if (mode === "default") this.sessionAllows.clear();
   }
 }
 

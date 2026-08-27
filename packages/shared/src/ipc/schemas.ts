@@ -115,6 +115,13 @@ export const validateAgentPrompt = objectValidator<AgentPromptInput>({
 
 // ── permissions ──────────────────────────────────────────────────────────────
 
+export interface PermissionModeSetInput {
+  mode: "default" | "full";
+}
+export const validatePermissionModeSet = objectValidator<PermissionModeSetInput>({
+  mode: (v) => v === "default" || v === "full",
+});
+
 export interface ApprovalResolveInput {
   requestId: string;
   decision: "allow" | "allow-once" | "deny";

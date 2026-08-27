@@ -124,6 +124,46 @@ async function main(): Promise<void> {
     f.pm.cancelAll("probe cleanup");
   }
 
+  // ── full-access mode: auto-allow everything, no approval ───────────────────
+  {
+    const f = make({ trust: "trusted", cwd: ws });
+    r.check("default mode: edit asks", f.pm.getMode() === "default");
+
+    f.pm.setMode("full");
+    r.check("full mode: getMode reflects", f.pm.getMode() === "full");
+    const before = f.requests.length;
+    const bash = await f.pm.gate(bashEvent("rm -rf /tmp/x"));
+    r.check("full mode: high-risk bash auto-passes", bash.kind === "pass");
+    const edit = await f.pm.gate(editEvent(join(ws, "a.txt")));
+    r.check("full mode: edit auto-passes", edit.kind === "pass");
+    const out = await f.pm.gate(readEvent("/etc/passwd"));
+    r.check("full mode: read outside workspace auto-passes", out.kind === "pass");
+    r.check(
+      "full mode: zero approval requests",
+      f.requests.length === before,
+    );
+    r.check(
+      "full mode: audited as auto-allow with mode reason",
+      f.audit.some((a) => a.decision === "auto-allow" && a.reason === "full access"),
+    );
+
+    // 切回默认权限：审批恢复，且 session allow 规则被清空
+    f.pm.setMode("default");
+    const gatePromise = f.pm.gate(editEvent(join(ws, "a.txt")));
+    await waitFor(() => f.requests.length === before + 1);
+    f.pm.resolveApproval(f.requests[before]!.requestId, "sess-1", "allow");
+    r.check("back to default: edit asks again", (await gatePromise).kind === "pass");
+
+    // 会话切换（resetSessionRules）→ 模式回到默认
+    f.pm.setMode("full");
+    f.pm.resetSessionRules();
+    r.check("session switch resets mode to default", f.pm.getMode() === "default");
+    const p2 = f.pm.gate(bashEvent("echo hi"));
+    await waitFor(() => f.requests.length === before + 2);
+    f.pm.cancelAll("probe cleanup");
+    r.check("after reset: bash asks again", (await p2).kind === "block");
+  }
+
   // ── deny ────────────────────────────────────────────────────────────────────
   {
     const f = make({ trust: "trusted", cwd: ws });

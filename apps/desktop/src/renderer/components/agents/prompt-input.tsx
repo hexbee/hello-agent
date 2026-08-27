@@ -1,7 +1,7 @@
 "use client";
 // beui.dev/components/agents/prompt-input
 
-import { ArrowUp, Plus, Square } from "lucide-react";
+import { ArrowUp, Check, Plus, Shield, Square } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   type FormEvent,
@@ -36,6 +36,14 @@ export interface PromptModel {
   disabled?: boolean;
 }
 
+export interface PromptMode {
+  value: string;
+  label: ReactNode;
+  description?: ReactNode;
+  icon?: ReactNode;
+  disabled?: boolean;
+}
+
 export interface PromptAction {
   value: string;
   label: ReactNode;
@@ -57,6 +65,11 @@ export interface PromptInputProps extends Omit<
   onModelChange?: (model: string) => void;
   actions?: PromptAction[];
   onAction?: (action: string) => void;
+  /** 权限模式选择（如 默认权限 / 完全访问），弹层向上展开。 */
+  modes?: PromptMode[];
+  mode?: string;
+  defaultMode?: string;
+  onModeChange?: (mode: string) => void;
   onSubmit?: (value: string, model?: string) => void | Promise<void>;
   loading?: boolean;
   onStop?: () => void;
@@ -76,6 +89,10 @@ export function PromptInput({
   onModelChange,
   actions = [],
   onAction,
+  modes = [],
+  mode,
+  defaultMode,
+  onModeChange,
   onSubmit,
   loading = false,
   onStop,
@@ -96,12 +113,18 @@ export function PromptInput({
   const [internalModel, setInternalModel] = useState(
     defaultModel ?? models[0]?.value,
   );
+  const [internalMode, setInternalMode] = useState(
+    defaultMode ?? modes[0]?.value,
+  );
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [modesOpen, setModesOpen] = useState(false);
   const currentValue = value ?? internalValue;
   const currentModelValue = model ?? internalModel;
+  const currentModeValue = mode ?? internalMode;
   const currentModel = models.find(
     (option) => option.value === currentModelValue,
   );
+  const currentMode = modes.find((option) => option.value === currentModeValue);
   const canSubmit = Boolean(currentValue.trim()) && !disabled && !loading;
 
   const resizeTextarea = useCallback(() => {
@@ -138,6 +161,12 @@ export function PromptInput({
   const setModel = (next: string) => {
     if (model === undefined) setInternalModel(next);
     onModelChange?.(next);
+  };
+
+  const setMode = (next: string) => {
+    if (mode === undefined) setInternalMode(next);
+    onModeChange?.(next);
+    setModesOpen(false);
   };
 
   const submit = (event?: FormEvent) => {
@@ -248,6 +277,72 @@ export function PromptInput({
                       </span>
                     ) : null}
                   </span>
+                </button>
+              ))}
+            </MorphPopoverContent>
+          </MorphPopover>
+        ) : null}
+        {modes.length ? (
+          <MorphPopover open={modesOpen} onOpenChange={setModesOpen}>
+            <MorphPopoverTrigger>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={disabled || loading}
+                aria-label="权限模式"
+                className="h-8 rounded-xl px-2 py-0 text-xs hover:bg-muted focus-visible:ring-2"
+              >
+                <span className="flex items-center gap-1.5">
+                  {currentMode?.icon ? (
+                    <span className="grid size-4 shrink-0 place-items-center text-muted-foreground [&_svg]:size-3.5">
+                      {currentMode.icon}
+                    </span>
+                  ) : (
+                    <Shield className="size-3.5 text-muted-foreground" />
+                  )}
+                  <span className="truncate text-muted-foreground">
+                    {currentMode?.label ?? "权限模式"}
+                  </span>
+                </span>
+              </Button>
+            </MorphPopoverTrigger>
+
+            {/* 向上展开：side="top"，从输入框上方选择权限模式 */}
+            <MorphPopoverContent
+              side="top"
+              align="start"
+              sideOffset={8}
+              radius={12}
+              className="w-60 p-1.5"
+            >
+              {modes.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  disabled={option.disabled}
+                  onClick={() => setMode(option.value)}
+                  className="flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left outline-none transition-colors hover:bg-muted focus-visible:bg-muted disabled:pointer-events-none disabled:opacity-50"
+                >
+                  {option.icon ? (
+                    <span className="mt-0.5 grid size-5 shrink-0 place-items-center text-muted-foreground [&_svg]:size-4">
+                      {option.icon}
+                    </span>
+                  ) : null}
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm text-foreground">
+                      {option.label}
+                    </span>
+                    {option.description ? (
+                      <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
+                        {option.description}
+                      </span>
+                    ) : null}
+                  </span>
+                  {option.value === currentModeValue ? (
+                    <span className="mt-0.5 grid size-4 shrink-0 place-items-center text-accent">
+                      <Check className="size-4" />
+                    </span>
+                  ) : null}
                 </button>
               ))}
             </MorphPopoverContent>

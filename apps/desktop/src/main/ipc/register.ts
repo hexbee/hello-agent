@@ -4,6 +4,7 @@
 import { ipcMain, dialog, BrowserWindow } from "electron";
 import {
   validateApprovalResolve,
+  validatePermissionModeSet,
   validateAuthSubmitKey,
   validateModelsSelect,
   validateSessionDelete,
@@ -315,6 +316,28 @@ export function registerIpc(opts: {
   });
 
   // ── permissions ────────────────────────────────────────────────────────────
+
+  // 会话级权限模式：default（默认权限）/ full（完全访问）。
+  ipcMain.handle("permissions.setMode", async (event, input) => {
+    return wrap(() => {
+      if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
+      const v = validatePermissionModeSet(input);
+      if (!v.ok) return v;
+      requireTrusted("restricted");
+      const a = adapter();
+      a.permissions.setMode(v.data.mode);
+      audit.enqueue({
+        timestamp: Date.now(),
+        sessionId: a.sessionId,
+        toolCallId: "",
+        toolName: "(permissions.setMode)",
+        decision: "auto-allow",
+        reason: `mode=${v.data.mode}`,
+        inputSummary: { text: "", truncated: false, redacted: false },
+      });
+      return ok({ mode: v.data.mode });
+    });
+  });
 
   ipcMain.handle("approval.resolve", async (event, input) => {
     return wrap(() => {

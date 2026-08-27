@@ -54,6 +54,7 @@ const INVOKE_COMMANDS = new Set<Channel>([
   "agent.abort",
   "agent.snapshot",
   "agent.rebuild",
+  "permissions.setMode",
   "approval.resolve",
 ]);
 
@@ -118,6 +119,10 @@ const api = {
       decision: ApprovalResolveRequest["decision"],
     ): Promise<Result<{ resolved: true }>> =>
       invoke("approval.resolve", { requestId, sessionId, decision } satisfies ApprovalResolveRequest),
+  },
+  permissions: {
+    setMode: (mode: "default" | "full"): Promise<Result<{ mode: "default" | "full" }>> =>
+      invoke("permissions.setMode", { mode }),
   },
   events: {
     /** Single subscription point; Renderer never touches raw IPC. */

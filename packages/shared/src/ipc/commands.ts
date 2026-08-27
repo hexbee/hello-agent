@@ -112,6 +112,19 @@ export interface AgentRebuildResult {
 
 // ── permissions ──────────────────────────────────────────────────────────────
 
+/**
+ * 会话级权限模式（Composer 上的「权限」选择）：
+ * - default 默认权限：只读工具自动放行，写文件 / bash 等仍需审批（现状行为）
+ * - full 完全访问：所有工具自动放行，不再弹审批卡（审计记录仍保留）
+ * 会话切换时回到 default（与 session allow 规则同生命周期）。
+ */
+export type PermissionMode = "default" | "full";
+
+export interface PermissionModeSetRequest {
+  mode: PermissionMode;
+}
+export type PermissionModeSetResult = { mode: PermissionMode };
+
 /** 审批 TTL，Main 的 PermissionManager 与 Renderer 倒计时共用。 */
 export const APPROVAL_TTL_MS = 60_000;
 
