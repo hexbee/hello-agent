@@ -423,7 +423,7 @@ export function SessionSidebar() {
               >
                 <button
                   type="button"
-                  disabled={!allExpanded}
+                  disabled={allExpanded}
                   onClick={() => {
                     setProjectsMenuOpen(false);
                     setCollapsedIds(new Set());
