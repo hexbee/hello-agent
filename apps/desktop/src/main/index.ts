@@ -10,6 +10,7 @@ import { PiAdapter } from "./agent/pi-adapter.js";
 import { canonicalize, type AgentHost, type AgentHostPaths } from "./agent/host.js";
 import { SafeStorageCredentialStore } from "./auth/credential-store.js";
 import { TrustStore } from "./trust-store.js";
+import { WindowStateStore } from "./window-state.js";
 import { ProjectsStore } from "./projects-store.js";
 import { SessionPrefsStore } from "./session-prefs.js";
 import type { AgentEvent } from "@hello-agent/shared";
@@ -44,11 +45,18 @@ let adapter: PiAdapter | undefined;
 const workspace: WorkspaceState = { cwd: "", trust: "untrusted" };
 // §4.2 persisted Trust records, keyed by canonical workspace path.
 const trustStore = new TrustStore(join(dataDir(), "trust.json"));
+// 窗口状态持久化（大小/位置/最大化），同存 userData 根。
+const windowState = new WindowStateStore(join(dataDir(), "window-state.json"));
 
 function createWindow(): void {
+  // 恢复上次窗口大小/位置；显示器校验失败时无 x/y → Electron 默认居中。
+  const bounds = windowState.restore();
   win = new BrowserWindow({
-    width: 1100,
-    height: 800,
+    width: bounds.width,
+    height: bounds.height,
+    ...(bounds.x !== undefined && bounds.y !== undefined
+      ? { x: bounds.x, y: bounds.y }
+      : {}),
     // macOS 无边框：隐藏系统标题栏，红绿灯嵌到侧边栏顶部（renderer 预留
     // 顶部拖拽条并标记 app-drag），内容真正顶到窗口顶部。
     ...(process.platform === "darwin"
@@ -61,6 +69,10 @@ function createWindow(): void {
       nodeIntegration: false,
     },
   });
+  if (windowState.wasMaximized) win.maximize();
+  // 关闭时捕获窗口状态（app 退出路径也会先收每个窗口的 close）。
+  const created = win;
+  created.on("close", () => windowState.save(created));
 
   // §3.3 strict navigation guards
   win.webContents.on("will-navigate", (e, url) => {

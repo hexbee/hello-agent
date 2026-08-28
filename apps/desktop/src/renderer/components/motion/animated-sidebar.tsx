@@ -25,6 +25,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { createPortal } from "react-dom";
+import { loadPref, savePref } from "../../lib/ui-prefs";
 import { SharedLayoutBg } from "@/components/motion/shared-layout-bg";
 import {
   EASE_DRAWER,
@@ -231,7 +232,18 @@ export interface AnimatedSidebarProviderProps
   onOpenMobileChange?: (open: boolean) => void;
   /** Expanded width in px; defaults to the `--sidebar-width` css var (256px). */
   defaultSidebarWidth?: number;
+  /**
+   * localStorage 持久化命名空间（记住桌面端展开态与面板宽度）；缺省不持久化。
+   * 恢复值优先于 defaultOpen / defaultSidebarWidth / `--sidebar-width`。
+   */
+  persistKey?: string;
   style?: SidebarProviderStyle;
+}
+
+/** 持久化宽度回读：范围/类型防御，避免旧数据或脏数据撑破布局。 */
+function clampPersistedWidth(width: number | null): number | null {
+  if (width == null || !Number.isFinite(width)) return null;
+  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width));
 }
 
 export function AnimatedSidebarProvider({
@@ -243,11 +255,16 @@ export function AnimatedSidebarProvider({
   defaultOpenMobile = false,
   onOpenMobileChange,
   defaultSidebarWidth,
+  persistKey,
   className,
   style,
   ...props
 }: AnimatedSidebarProviderProps) {
-  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const [internalOpen, setInternalOpen] = useState(() =>
+    persistKey
+      ? (loadPref<boolean | null>(`${persistKey}:open`, null) ?? defaultOpen)
+      : defaultOpen,
+  );
   const [internalOpenMobile, setInternalOpenMobile] =
     useState(defaultOpenMobile);
   const isMobile = useIsMobile();
@@ -257,7 +274,11 @@ export function AnimatedSidebarProvider({
   const desktopOpen = open ?? internalOpen;
   const mobileOpen = openMobile ?? internalOpenMobile;
   const initialSidebarWidth = useRef(
-    defaultSidebarWidth ?? parseCssLength(style?.["--sidebar-width"]),
+    (persistKey
+      ? clampPersistedWidth(loadPref<number | null>(`${persistKey}:width`, null))
+      : null) ??
+      defaultSidebarWidth ??
+      parseCssLength(style?.["--sidebar-width"]),
   );
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth.current);
   const resetSidebarWidth = useCallback(
@@ -300,6 +321,22 @@ export function AnimatedSidebarProvider({
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
   }, [toggleSidebar]);
+
+  // 展开态持久化：折叠/展开为低频操作，直接落盘。
+  useEffect(() => {
+    if (!persistKey) return;
+    savePref(`${persistKey}:open`, desktopOpen);
+  }, [persistKey, desktopOpen]);
+
+  // 宽度持久化：拖拽期间连续变化，防抖落盘。
+  useEffect(() => {
+    if (!persistKey) return;
+    const timer = setTimeout(
+      () => savePref(`${persistKey}:width`, sidebarWidth),
+      300,
+    );
+    return () => clearTimeout(timer);
+  }, [persistKey, sidebarWidth]);
 
   return (
     <AnimatedSidebarContext.Provider

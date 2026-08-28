@@ -35,8 +35,10 @@ export function App() {
       )}
 
       {/* 不再展示 gate 首页：即使没有打开项目，也直接进入 agent 对话页。 */}
+      {/* persistKey：侧边栏展开态与宽度持久化（localStorage，见 ui-prefs）。 */}
       <AnimatedSidebarProvider
         defaultSidebarWidth={240}
+        persistKey="sidebar"
         className="min-h-0 flex-1"
       >
         <WindowControlsRow />

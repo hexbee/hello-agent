@@ -332,13 +332,14 @@ export function PromptInput({
               </Button>
             </MorphPopoverTrigger>
 
-            {/* 向上展开：side="top"，从输入框上方选择权限模式 */}
+            {/* 向上展开：side="top"，从输入框上方选择权限模式；
+                w-80 保证中文描述一行放得下，不换行 */}
             <MorphPopoverContent
               side="top"
               align="start"
               sideOffset={8}
               radius={12}
-              className="w-60 p-1.5"
+              className="w-80 p-1.5"
             >
               {modes.map((option) => (
                 <button

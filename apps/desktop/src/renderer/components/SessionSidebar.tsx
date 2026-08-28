@@ -18,7 +18,7 @@ import {
   SquarePen,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AnimatedSidebar,
   AnimatedSidebarMenu,
@@ -31,6 +31,7 @@ import {
   MorphPopoverTrigger,
 } from "./motion/popover-morph";
 import { cn } from "../lib/utils";
+import { loadPref, savePref } from "../lib/ui-prefs";
 import {
   AISidebar,
   type SidebarResource,
@@ -101,13 +102,42 @@ export function SessionSidebar() {
   const items = toTree(s);
   // 项目行尾的「新对话」钮与 ⋯ 钮一致：hover 设备上悬停显示，触屏常显。
   const canTouch = useTouchCapable();
-  // 「项目」分区整体折叠（Codex 侧边栏的「项目 ⌄」）。
-  const [sectionOpen, setSectionOpen] = useState(true);
+  // 「项目」分区整体折叠（Codex 侧边栏的「项目 ⌄」）——持久化。
+  const [sectionOpen, setSectionOpen] = useState(() => loadPref("section-open", true));
+  useEffect(() => {
+    savePref("section-open", sectionOpen);
+  }, [sectionOpen]);
   // 「项目」⋯ 菜单。
   const [projectsMenuOpen, setProjectsMenuOpen] = useState(false);
-  // 受控的各项目展开集合：AISidebar 负责行渲染，本层持有状态以支持「全部展开/折叠」。
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(
-    () => new Set(s.projects.map((p) => p.cwd)),
+  // 受控的各项目展开集合：本层持久化的是「已折叠项目」集合，未列入的一律展开
+  //（新增项目默认展开；null = 从未手动折叠过，全部展开）。AISidebar 负责行渲染，
+  // 本层持有状态以支持「全部展开/折叠」。
+  // 注意键名 v2：v1 曾因展开/折叠集合语义反转写入过脏数据，改名丢弃。
+  const [collapsedIds, setCollapsedIds] = useState<Set<string> | null>(() => {
+    const saved = loadPref<string[] | null>("tree-collapsed-v2", null);
+    return saved ? new Set(saved) : null;
+  });
+  useEffect(() => {
+    if (collapsedIds !== null) savePref("tree-collapsed-v2", [...collapsedIds]);
+  }, [collapsedIds]);
+  // 传给 AISidebar 的生效展开集合 = 全部项目 − 已折叠（补集，切勿直接传 collapsedIds）。
+  const expandedIds = useMemo(
+    () =>
+      collapsedIds === null
+        ? new Set(s.projects.map((p) => p.cwd))
+        : new Set(
+            s.projects.map((p) => p.cwd).filter((cwd) => !collapsedIds.has(cwd)),
+          ),
+    [collapsedIds, s.projects],
+  );
+  // AISidebar 的 toggle/自动展开回报「新的完整展开集合」，反推持久化的折叠集合
+  //（顺带清掉已移除项目的残留 id）。
+  const onExpandedChange = useCallback(
+    (ids: Set<string>) =>
+      setCollapsedIds(
+        new Set(s.projects.map((p) => p.cwd).filter((cwd) => !ids.has(cwd))),
+      ),
+    [s.projects],
   );
   const anyExpanded = items.some((p) => expandedIds.has(p.id));
   const allExpanded =
@@ -396,7 +426,7 @@ export function SessionSidebar() {
                   disabled={!allExpanded}
                   onClick={() => {
                     setProjectsMenuOpen(false);
-                    setExpandedIds(new Set(items.map((p) => p.id)));
+                    setCollapsedIds(new Set());
                   }}
                   className={MENU_ACTION_CLASS}
                 >
@@ -408,7 +438,7 @@ export function SessionSidebar() {
                   disabled={!anyExpanded}
                   onClick={() => {
                     setProjectsMenuOpen(false);
-                    setExpandedIds(new Set());
+                    setCollapsedIds(new Set(items.map((p) => p.id)));
                   }}
                   className={MENU_ACTION_CLASS}
                 >
@@ -451,7 +481,7 @@ export function SessionSidebar() {
               <AISidebar
                 items={items}
                 expandedIds={expandedIds}
-                onExpandedChange={setExpandedIds}
+                onExpandedChange={onExpandedChange}
                 visibleChildren={SESSION_PAGE_SIZE}
                 showMoreLabel="展开更多"
                 activeId={activeId}
