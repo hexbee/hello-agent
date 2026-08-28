@@ -2,6 +2,15 @@
 /* markstream CSS after reset/tailwind, scoped to components layer (install skill: CSS order) */
 @import "markstream-react/index.css" layer(components);
 
+/* 无边框窗口（macOS hiddenInset）的拖拽区/豁免区：顶栏与侧栏顶部条标记
+   app-drag 用于拖动窗口，其中的可点击控件标记 app-no-drag 保持可点。 */
+.app-drag {
+  -webkit-app-region: drag;
+}
+.app-no-drag {
+  -webkit-app-region: no-drag;
+}
+
 @theme {
   --color-bg: #0f1115;
   --color-panel: #161a21;

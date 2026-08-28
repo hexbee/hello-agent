@@ -48,6 +48,11 @@ function createWindow(): void {
   win = new BrowserWindow({
     width: 1100,
     height: 800,
+    // macOS 无边框：隐藏系统标题栏，红绿灯嵌到侧边栏顶部（renderer 预留
+    // 顶部拖拽条并标记 app-drag），内容真正顶到窗口顶部。
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 16, y: 14 } }
+      : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       contextIsolation: true, // §3 frozen defaults
@@ -103,6 +108,47 @@ function createWindow(): void {
             process.env.SPIKE_PROBE_OUT!,
             JSON.stringify({ error: String(e), diag }, null, 2),
           );
+          app.quit();
+        });
+    });
+  }
+  // 临时 UI 探针（SPIKE_UI_PROBE=输出路径）：验证侧边栏折叠按钮的几何与状态链路。
+  if (process.env.SPIKE_UI_PROBE) {
+    win.webContents.once("did-finish-load", () => {
+      void win!
+        .webContents
+        .executeJavaScript(`(async () => {
+          const btn = document.querySelector('[data-slot="sidebar-trigger"]');
+          if (!btn) return JSON.stringify({ found: false });
+          const r = btn.getBoundingClientRect();
+          const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+          const top = document.elementFromPoint(cx, cy);
+          const slot = document.querySelector('[data-slot="sidebar"]');
+          const before = slot ? slot.getAttribute("data-state") : null;
+          btn.click();
+          await new Promise((res) => setTimeout(res, 800));
+          const afterCollapse = slot ? slot.getAttribute("data-state") : null;
+          const topAfterCollapse = document.elementFromPoint(cx, cy);
+          btn.click();
+          await new Promise((res) => setTimeout(res, 800));
+          const afterExpand = slot ? slot.getAttribute("data-state") : null;
+          return JSON.stringify({
+            found: true,
+            rect: { x: r.x, y: r.y, w: r.width, h: r.height },
+            topAtPoint: top ? top.tagName + " " + String(top.className).slice(0, 100) : null,
+            before, afterCollapse,
+            topAfterCollapse: topAfterCollapse
+              ? topAfterCollapse.tagName + " " + String(topAfterCollapse.className).slice(0, 100)
+              : null,
+            afterExpand,
+          });
+        })()`)
+        .then((json) => {
+          writeFileSync(process.env.SPIKE_UI_PROBE!, json + "\n");
+          app.quit();
+        })
+        .catch((e) => {
+          writeFileSync(process.env.SPIKE_UI_PROBE!, JSON.stringify({ error: String(e) }) + "\n");
           app.quit();
         });
     });

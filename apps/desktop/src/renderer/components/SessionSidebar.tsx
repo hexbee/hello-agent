@@ -8,6 +8,7 @@ import {
   Pencil,
   Plug,
   Plus,
+  Settings,
   SquarePen,
   Trash2,
 } from "lucide-react";
@@ -26,6 +27,7 @@ import {
   type SidebarResourceMove,
 } from "./agents/ai-sidebar";
 import { store, useStore, type StoreState } from "../store";
+import { isMac } from "../platform";
 
 function basename(p: string): string {
   return p.split("/").filter(Boolean).pop() ?? p;
@@ -219,6 +221,15 @@ export function SessionSidebar() {
           bg-panel 不同；直接传 panelClassName 会与默认类产生同类
           utility 冲突（谁赢取决于样式表顺序），用铺满的子层最稳。 */}
       <div className="flex h-full min-h-0 flex-col bg-panel">
+        {/* 红绿灯留白条（仅 macOS 无边框窗口）：仅左侧 20px 覆盖红绿灯的区域是
+            窗口拖拽区，其余留白不可 drag —— 避免任何 drag 盒子压在固定折叠
+            按钮下方，导致点击被窗口拖拽吞掉。 */}
+        {isMac && (
+          <div className="flex h-10 shrink-0">
+            <span aria-hidden="true" className="app-drag h-full w-20 shrink-0" />
+            <span aria-hidden="true" className="h-full min-w-0 flex-1" />
+          </div>
+        )}
         {/* 顶部操作区：复刻 docs/ai-sidebar.md 的 action 菜单（新对话 / Pull Request / 已安排 / 插件）。
             其余三项为空实现，仅“新对话”及右侧 + 按钮实际生效（新建会话 / 打开项目）。 */}
         <AnimatedSidebarMenu className="gap-1 px-2 py-3">
@@ -302,6 +313,17 @@ export function SessionSidebar() {
         </div>
 
         {s.forkCandidates.length > 0 && <ForkSection />}
+
+        {/* 左下角设置入口：打开设置页（Provider 凭据等配置）。 */}
+        <div className="border-t border-border px-3 py-2">
+          <button
+            className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-1 py-1 text-xs text-muted-foreground outline-none transition-colors hover:bg-panel-2 hover:text-fg"
+            onClick={() => store.openSettings()}
+          >
+            <Settings aria-hidden="true" className="size-3.5 shrink-0" />
+            设置
+          </button>
+        </div>
       </div>
     </AnimatedSidebar>
   );

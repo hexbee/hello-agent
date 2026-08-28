@@ -1,9 +1,12 @@
+import { PanelLeft } from "lucide-react";
 import { store, useStore } from "../store";
-import { AuthDialog } from "./AuthDialog";
+import { isMac } from "../platform";
+import { SettingsDialog } from "./SettingsDialog";
 import { ChatView } from "./ChatView";
 import {
   AnimatedSidebarInset,
   AnimatedSidebarProvider,
+  AnimatedSidebarTrigger,
 } from "./motion/animated-sidebar";
 import { SessionSidebar } from "./SessionSidebar";
 import { TopBar } from "./TopBar";
@@ -37,6 +40,7 @@ export function App() {
         defaultSidebarWidth={240}
         className="min-h-0 flex-1"
       >
+        <WindowControlsRow />
         <SessionSidebar />
         <AnimatedSidebarInset>
           <TopBar />
@@ -59,7 +63,33 @@ export function App() {
       </AnimatedSidebarProvider>
 
       <TrustDialog />
-      <AuthDialog />
+      <SettingsDialog />
+    </div>
+  );
+}
+
+/**
+ * macOS 无边框窗口：固定在窗口左上角的控制行——红绿灯占位（拖拽区）+ 侧边栏
+ * 折叠开关。不随侧边栏折叠而消失：折叠后开关与红绿灯叠在顶栏上方，位置不变
+ * （对齐 Codex）。非 macOS 有原生标题栏，无需此行。
+ *
+ * 注意：折叠按钮周围（含下层元素）不能有任何 drag 盒子——drag 区域的命中
+ * 测试发生在真实输入层，按钮被 drag 盒子覆盖时点击会被窗口拖拽吞掉。
+ * 因此 drag 区收缩到只盖红绿灯的 20px 占位条（侧边栏顶部条同理），
+ * 按钮完全在 drag 区域之外，不依赖 no-drag carve-out。
+ */
+function WindowControlsRow() {
+  if (!isMac) return null;
+  return (
+    <div className="fixed left-0 top-0 z-40 flex h-10 items-center">
+      {/* 红绿灯占位：trafficLightPosition {x:16,y:14}，三枚共占约 68px 宽。 */}
+      <span aria-hidden="true" className="app-drag h-full w-20 shrink-0" />
+      <AnimatedSidebarTrigger
+        className="ml-1 size-7 shrink-0 rounded-lg text-muted-foreground hover:bg-muted hover:text-fg"
+        title="折叠/展开侧边栏 (⌘/Ctrl+B)"
+      >
+        <PanelLeft aria-hidden="true" className="size-4" />
+      </AnimatedSidebarTrigger>
     </div>
   );
 }

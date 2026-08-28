@@ -1,6 +1,7 @@
-import { PanelLeft } from "lucide-react";
-import { store, useStore } from "../store";
-import { AnimatedSidebarTrigger } from "./motion/animated-sidebar";
+import { ChevronRight, PanelLeft } from "lucide-react";
+import { useStore } from "../store";
+import { isMac } from "../platform";
+import { AnimatedSidebarTrigger, useAnimatedSidebar } from "./motion/animated-sidebar";
 
 const TRUST_LABEL: Record<string, string> = {
   untrusted: "未信任",
@@ -10,23 +11,35 @@ const TRUST_LABEL: Record<string, string> = {
 
 export function TopBar() {
   const s = useStore();
-
-  const grouped = new Map<string, typeof s.models>();
-  for (const m of s.models) {
-    const list = grouped.get(m.provider) ?? [];
-    list.push(m);
-    grouped.set(m.provider, list);
-  }
+  // macOS 无边框窗口：侧边栏折叠（offcanvas）后红绿灯 + 固定折叠开关叠在
+  // 顶栏上方，左侧留出等宽内边距避免文字与之重叠。
+  const { open } = useAnimatedSidebar();
+  // 窗口拖拽层的左起点：必须避开固定控制行/折叠按钮（drag 盒子盖住按钮时，
+  // 真实点击会被窗口拖拽吞掉 —— 折叠态顶栏从 x=0 铺开正好盖住按钮）。
+  // 非 macOS 折叠按钮在顶栏内（约 60px 宽），同样避开。
+  const dragLeft = isMac ? (open ? 0 : 120) : 60;
 
   return (
-    <div className="flex items-center gap-3 border-b border-border bg-panel px-4 py-2">
+    <div
+      className={`relative isolate flex min-h-10 items-center gap-3 border-b border-border bg-panel px-3 py-1 ${
+        isMac && !open ? "pl-[116px]" : ""
+      }`}
+    >
+      {/* 窗口拖拽层：铺满顶栏但避开按钮；文字内容在其上方（均非交互元素）。 */}
+      <div
+        aria-hidden="true"
+        className="app-drag absolute inset-y-0 -z-10 right-0"
+        style={{ left: dragLeft }}
+      />
       <div className="flex min-w-0 items-center gap-2 text-sm">
-        <AnimatedSidebarTrigger
-          className="-ml-1.5 text-muted-foreground transition-colors hover:text-fg"
-          title={"折叠/展开侧边栏 (⌘/Ctrl+B)"}
-        >
-          <PanelLeft aria-hidden="true" className="size-4" />
-        </AnimatedSidebarTrigger>
+        {!isMac && (
+          <AnimatedSidebarTrigger
+            className="-ml-1.5 text-muted-foreground transition-colors hover:text-fg"
+            title={"折叠/展开侧边栏 (⌘/Ctrl+B)"}
+          >
+            <PanelLeft aria-hidden="true" className="size-4" />
+          </AnimatedSidebarTrigger>
+        )}
         <span
           className={`inline-block h-2 w-2 shrink-0 rounded-full ${
             s.agentState === "running"
@@ -42,46 +55,21 @@ export function TopBar() {
         <span className="rounded bg-panel-2 px-1.5 py-0.5 text-[11px] text-muted-foreground">
           {TRUST_LABEL[s.trust]}
         </span>
+        {/* 当前会话名（自动起标题/手动改名后才有）：新会话不展示。 */}
+        {s.session?.name && (
+          <>
+            <ChevronRight aria-hidden="true" className="size-3 shrink-0 text-muted-foreground/60" />
+            <span
+              className="truncate text-xs text-fg"
+              title={s.session.name}
+            >
+              {s.session.name}
+            </span>
+          </>
+        )}
       </div>
 
       <div className="flex-1" />
-
-      <select
-        className="max-w-[260px] cursor-pointer truncate rounded-lg border border-border bg-panel-2 px-2 py-1 text-xs outline-none"
-        value={s.selectedModel ?? ""}
-        onChange={(e) => void store.selectModel(e.target.value)}
-      >
-        <option value="" disabled>
-          {s.authState.configured ? "选择模型…" : "无可用模型（检查凭据）"}
-        </option>
-        {[...grouped.entries()].map(([provider, models]) => (
-          <optgroup key={provider} label={provider}>
-            {models.map((m) => (
-              <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
-                {m.id}
-                {m.context ? ` (${Math.round(m.context / 1000)}k)` : ""}
-              </option>
-            ))}
-          </optgroup>
-        ))}
-      </select>
-
-      {s.authState.configured ? (
-        <button
-          className="cursor-pointer text-xs text-muted-foreground hover:text-fg"
-          title={`provider: ${s.authState.provider} · ${s.authState.maskedHint ?? ""}\n点击管理凭据`}
-          onClick={() => store.openAuthDialog()}
-        >
-          🔑 {s.authState.provider} {s.authState.maskedHint ?? ""}
-        </button>
-      ) : (
-        <button
-          className="cursor-pointer rounded-lg bg-accent/20 px-2 py-1 text-xs text-accent hover:bg-accent/30"
-          onClick={() => store.openAuthDialog()}
-        >
-          配置凭据…
-        </button>
-      )}
     </div>
   );
 }

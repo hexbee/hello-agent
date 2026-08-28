@@ -68,6 +68,8 @@ function invoke<T>(channel: Channel, payload?: unknown): Promise<T> {
 }
 
 const api = {
+  /** 宿主平台（darwin/win32/linux）：renderer 据此做红绿灯区域等平台适配。 */
+  platform: process.platform,
   workspace: {
     pickAndOpen: (): Promise<Result<{ cwd: string; trust: string }>> =>
       invoke("workspace.pickAndOpen"),

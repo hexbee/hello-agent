@@ -68,7 +68,8 @@ export type StoreState = {
   /** 已打开过的项目及其会话（侧边栏项目树数据源）。 */
   projects: ProjectSessions[];
   banner: { kind: "error" | "info"; text: string } | null;
-  authDialogOpen: boolean;
+  /** 设置页（含 Provider 凭据配置）弹层。 */
+  settingsOpen: boolean;
   /** 打开未信任目录时的信任级别确认弹窗（替代原 gate 首页）。 */
   trustDialogOpen: boolean;
 };
@@ -121,7 +122,7 @@ const initialState: StoreState = {
   forkCandidates: [],
   projects: [],
   banner: null,
-  authDialogOpen: false,
+  settingsOpen: false,
   trustDialogOpen: false,
 };
 
@@ -876,23 +877,24 @@ class Store {
     this.set({ banner: null });
   }
 
-  openAuthDialog(): void {
+  /** 打开设置页：先刷新快照拿最新凭据状态。 */
+  openSettings(): void {
     void this.refreshSnapshot().catch(() => undefined);
-    this.set({ authDialogOpen: true, banner: null });
+    this.set({ settingsOpen: true, banner: null });
   }
 
-  closeAuthDialog(): void {
-    this.set({ authDialogOpen: false });
+  closeSettings(): void {
+    this.set({ settingsOpen: false });
   }
 
-  /** §8 — submit API key; Main verifies then persists via secure storage. */
+  /** §8 — submit API key; Main verifies then persists via secure storage.
+   *  设置页保持打开，凭据状态面板与 banner 反映结果。 */
   async submitApiKey(provider: string, apiKey: string): Promise<void> {
     try {
       const st = unwrap(await api().auth.submitKey(provider, apiKey));
       await this.refreshSnapshot();
-      this.set({ authDialogOpen: false, authState: st, banner: { kind: "info", text: `${provider} 凭据已保存到系统安全存储` } });
+      this.set({ authState: st, banner: { kind: "info", text: `${provider} 凭据已保存到系统安全存储` } });
     } catch (e) {
-      // Keep dialog open; show error inside it via banner.
       this.set({ banner: { kind: "error", text: String(e) } });
     }
   }
