@@ -243,6 +243,7 @@ async switchSession(path: string) {
 - JSONL 是唯一会话主存储。`SessionManager` 负责 list/open/continue；runtime 负责 new/switch/fork。
 - rename 使用 pi API，不直接修改 JSONL。
 - delete 仅接收 SessionManager 返回的已验证会话路径；优先移入回收站。若必须永久删除，需二次确认并拒绝 symlink/工作区外路径。
+- **权限/模型偏好继承**（`session-prefs.json`，Main 进程私有）：全局 last + 按项目目录记忆「会话级权限模式 + 模型引用」。用户修改权限/模型、以及每次会话落定（新建/打开/切换）后同步记录；「新对话」继承全局最后一次（跨项目），切换会话/项目恢复该目录最后一次的选择。受限工作区不恢复「完全访问」。验证：`pnpm probe:session-prefs`。
 - SQLite 只保存审计、设置和未来索引；不进入 Agent/Session 执行主路径，也不与 JSONL 双写为主数据。
 - 审计库可在首次审计写入时 lazy 初始化，但它是 v0.1 权限闭环的一部分。JSONL/SQLite 的版本、迁移、备份、恢复、保留期和损坏处理仍是第 1.2 节的冻结前未决项，不得假定已经完成。
 

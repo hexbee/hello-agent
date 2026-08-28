@@ -96,7 +96,8 @@ export function registerIpc(opts: {
       }
       // §4.1: Main canonicalizes; Renderer never supplies paths.
       const cwd = await opts.openWorkspace(result.filePaths[0]!);
-      opts.projects.add(cwd); // record for the project tree + launch restore
+      // 记录项目树 + 启动恢复用 lastOpened；已有项目保持原位不跳动。
+      opts.projects.add(cwd);
       return ok({ cwd, trust: opts.getWorkspace().trust });
     });
   });
@@ -125,7 +126,8 @@ export function registerIpc(opts: {
   ipcMain.handle("projects.list", async (event): Promise<Result<unknown>> => {
     return wrap(() => {
       if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
-      return ok({ projects: opts.projects.list() });
+      // lastOpened：最近打开的项目（启动恢复用），与侧边栏显示顺序无关。
+      return ok({ projects: opts.projects.list(), lastOpened: opts.projects.lastOpened() });
     });
   });
 
@@ -148,7 +150,8 @@ export function registerIpc(opts: {
         return fail("denied", "unknown project");
       }
       const real = await opts.openWorkspace(cwd);
-      opts.projects.add(real); // bump to most-recent
+      // 仅更新 lastOpened；项目在侧边栏中的位置保持不变。
+      opts.projects.add(real);
       return ok({ cwd: real, trust: opts.getWorkspace().trust });
     });
   });
@@ -352,7 +355,9 @@ export function registerIpc(opts: {
       if (!v.ok) return v;
       requireTrusted("restricted");
       const a = adapter();
-      a.permissions.setMode(v.data.mode);
+      // 经 adapter 入口切换：PermissionManager 生效的同时同步偏好记忆
+      // （全局最后一次 + 当前项目目录），供新对话/切换会话恢复。
+      a.setPermissionMode(v.data.mode);
       audit.enqueue({
         timestamp: Date.now(),
         sessionId: a.sessionId,

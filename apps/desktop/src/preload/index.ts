@@ -78,7 +78,8 @@ const api = {
     close: (): Promise<Result<{ closed: true }>> => invoke("workspace.close"),
   },
   projects: {
-    list: (): Promise<Result<{ projects: string[] }>> => invoke("projects.list"),
+    list: (): Promise<Result<{ projects: string[]; lastOpened: string | null }>> =>
+      invoke("projects.list"),
     sessions: (): Promise<Result<ProjectSessions[]>> => invoke("projects.sessions"),
     open: (cwd: string): Promise<Result<{ cwd: string; trust: string }>> =>
       invoke("projects.open", { cwd }),

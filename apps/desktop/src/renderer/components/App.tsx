@@ -10,7 +10,6 @@ import {
 } from "./motion/animated-sidebar";
 import { SessionSidebar } from "./SessionSidebar";
 import { TopBar } from "./TopBar";
-import { TrustDialog } from "./TrustDialog";
 
 export function App() {
   const s = useStore();
@@ -62,7 +61,6 @@ export function App() {
         </AnimatedSidebarInset>
       </AnimatedSidebarProvider>
 
-      <TrustDialog />
       <SettingsDialog />
     </div>
   );

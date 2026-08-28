@@ -11,6 +11,7 @@ import { canonicalize, type AgentHost, type AgentHostPaths } from "./agent/host.
 import { SafeStorageCredentialStore } from "./auth/credential-store.js";
 import { TrustStore } from "./trust-store.js";
 import { ProjectsStore } from "./projects-store.js";
+import { SessionPrefsStore } from "./session-prefs.js";
 import type { AgentEvent } from "@hello-agent/shared";
 import { APPROVAL_TTL_MS } from "@hello-agent/shared";
 import { registerIpc, type WorkspaceState } from "./ipc/register.js";
@@ -213,6 +214,8 @@ app.whenReady().then(async () => {
   const auditSink = createAuditSink(host.paths.auditFile);
   // Opened projects, persisted for launch-time restore + per-project session tree.
   const projectsStore = new ProjectsStore(join(dataDir(), "projects.json"), host.paths.sessionsDir);
+  // 全局最后一次 + 按项目目录的权限/模型偏好（新对话继承、切换会话恢复）。
+  const sessionPrefs = new SessionPrefsStore(join(dataDir(), "session-prefs.json"));
   const permissions = new PermissionManager({
     getTrust: () => workspace.trust,
     getCwd: () => workspace.cwd,
@@ -227,7 +230,7 @@ app.whenReady().then(async () => {
     if (!workspace.cwd || workspace.trust === "untrusted") {
       throw new Error("untrusted_workspace");
     }
-    adapter = adapter ?? new PiAdapter(host, permissions);
+    adapter = adapter ?? new PiAdapter(host, permissions, { prefs: sessionPrefs });
     await adapter.create(workspace.cwd); // dispose + rebuild on cwd change (§4.5)
   }
 
@@ -248,14 +251,12 @@ app.whenReady().then(async () => {
       const real = canonicalize(rawPath);
       if (!real) throw new Error("invalid_input: cannot canonicalize workspace path");
       workspace.cwd = real;
-      // §4.1 TrustCheck: restore a previously granted level for THIS canonical
-      // path; no record ⇒ untrusted. Always reassign so a prior folder's trust
-      // can never leak into the newly opened one.
-      workspace.trust = trustStore.get(real) ?? "untrusted";
-      // §4.1 TrustCheck passed via a persisted grant ⇒ resume straight into
-      // ConfigureAuth/CreateRuntime. Otherwise the renderer's "enter" path
-      // (snapshot-only) would hit a missing adapter → no_runtime.
-      if (workspace.trust !== "untrusted") await ensureRuntime();
+      // 打开即信任：不再有信任级别确认弹窗，任何被打开的目录都直接视为
+      // 完全信任并进入 CreateRuntime。同步持久化授权记录，保持 trust.json
+      // 与实际状态一致（旧的 restricted 记录也被提升为 trusted）。
+      workspace.trust = "trusted";
+      trustStore.grant(real, "trusted");
+      await ensureRuntime();
       return real;
     },
     ensureRuntime,

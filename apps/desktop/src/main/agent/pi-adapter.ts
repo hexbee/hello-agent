@@ -28,6 +28,7 @@ import {
 } from "./host.js";
 import { PermissionManager } from "./permission-manager.js";
 import { createIsolatedModelRuntime, makeServicesFactory } from "./isolation.js";
+import type { SessionPrefs, SessionPrefsStore } from "../session-prefs.js";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 export type AgentState = "idle" | "running" | "aborted" | "failed";
@@ -57,7 +58,11 @@ export class PiAdapter {
     readonly host: AgentHost,
     readonly permissions: PermissionManager,
     /** Probe seam: additional inline extensions (e.g. hang injection). */
-    private opts: { extraExtensions?: InlineExtension[] } = {},
+    private opts: {
+      extraExtensions?: InlineExtension[];
+      /** 持久化的偏好记忆（新对话继承最后一次、切换会话恢复目录偏好）。 */
+      prefs?: SessionPrefsStore;
+    } = {},
   ) {
     this.batcher = new DeltaBatcher((events) => {
       for (const e of events) this.emit(e);
@@ -74,6 +79,10 @@ export class PiAdapter {
     const cwd = canonicalize(cwdInput);
     if (!cwd) throw new Error(`cannot canonicalize cwd: ${cwdInput}`);
     this.canonicalCwd = cwd;
+
+    // 捕获替换前的会话偏好（权限模式 + 模型）：目录无记忆时沿用，
+    // 让「切换到全新项目」也等价于继承最后一次对话（与「新对话」一致）。
+    const carried = this.currentPrefs();
 
     await this.disposeInternal({ abortFirst: false });
 
@@ -109,6 +118,9 @@ export class PiAdapter {
 
     this.assistantOrdinal = 0;
     await this.bindCurrentSession();
+    // 恢复该目录最后一次的权限/模型；无记忆则沿用切换前的选择（继承最后一次对话）。
+    await this.applyPrefs(this.opts.prefs?.getForProject(cwd) ?? carried);
+    this.recordPrefs();
     this.disarmWatchdog();
     return { cwd };
   }
@@ -287,18 +299,31 @@ export class PiAdapter {
     // Only sessions inside OUR dir are openable (delete/open share this rule). §5.3
     const real = this.ensureOwnSessionFile(pathInput);
     await this.replaceSession(() => runtime.switchSession(real));
+    // 切换会话：恢复该目录最后一次的权限/模型（覆盖 pi 从会话文件恢复的
+    // 旧模型，保证同目录内体验一致）。
+    await this.applyPrefs(this.opts.prefs?.getForProject(this.canonicalCwd ?? "") ?? null);
+    this.recordPrefs();
     return { sessionId: this.sessionId };
   }
 
   async newSession(): Promise<{ sessionId: string }> {
     const runtime = this.requireRuntime();
+    // 新对话：先捕获当前（=全局最后一次，无论哪个项目）的权限/模型，
+    // replaceSession 会把模式重置回 default、模型回退到 pi 默认，之后恢复。
+    const carried = this.currentPrefs();
     await this.replaceSession(() => runtime.newSession());
+    await this.applyPrefs(carried);
+    this.recordPrefs();
     return { sessionId: this.sessionId };
   }
 
   async forkSession(entryId: string): Promise<{ sessionId: string }> {
     const runtime = this.requireRuntime();
+    // 分叉是同一段对话的延续：继承源会话当前的权限/模型。
+    const carried = this.currentPrefs();
     await this.replaceSession(() => runtime.fork(entryId));
+    await this.applyPrefs(carried);
+    this.recordPrefs();
     return { sessionId: this.sessionId };
   }
 
@@ -426,6 +451,40 @@ export class PiAdapter {
   async selectModel(ref: string): Promise<string | null> {
     const session = this.requireSession();
     if (this.state === "running") throw new Error("busy: agent running");
+    await this.applyModelRef(ref);
+    const model = session.model;
+    // 模型变化即记录：全局最后一次 + 当前项目目录的记忆同步更新。
+    this.recordPrefs();
+    return model ? `${model.provider}/${model.id}` : null;
+  }
+
+  /** 会话级权限模式切换（Renderer IPC 入口）；变化后同步记录偏好。 */
+  setPermissionMode(mode: "default" | "full"): void {
+    this.permissions.setMode(mode);
+    this.recordPrefs();
+  }
+
+  // ── 偏好继承（session-prefs）───────────────────────────────────────────
+
+  /** 当前会话的偏好快照：权限模式 + 模型引用（无会话/模型时 model 为 null）。 */
+  private currentPrefs(): SessionPrefs {
+    const model = this.session?.model;
+    return {
+      permissionMode: this.permissions.getMode(),
+      model: model ? `${model.provider}/${model.id}` : null,
+    };
+  }
+
+  /** 把当前偏好记入持久化记忆（全局 last + 当前项目目录）。 */
+  private recordPrefs(): void {
+    const cwd = this.canonicalCwd ?? "";
+    if (!cwd) return;
+    this.opts.prefs?.record(cwd, this.currentPrefs());
+  }
+
+  /** 解析 "provider/modelId" 并应用到当前会话；找不到/无凭据时抛错。 */
+  private async applyModelRef(ref: string): Promise<void> {
+    const session = this.requireSession();
     // ref 形如 "provider/model-id"；model id 本身可含斜杠（如 OpenRouter 的
     // "~anthropic/claude-fable-latest"、"z-ai/glm-5.2:free"），因此只按第一个
     // 斜杠切分，其余全部属于 model id。
@@ -435,8 +494,31 @@ export class PiAdapter {
     const model: Model<Api> | undefined =
       provider && id ? this.modelRuntime!.getModel(provider, id) : undefined;
     if (!model) throw new Error(`model not found: ${ref}`);
+    if (!this.modelRuntime!.hasConfiguredAuth(model.provider)) {
+      throw new Error(`auth_required: provider ${provider} not configured`);
+    }
     await session.setModel(model);
-    return `${model.provider}/${model.id}`;
+  }
+
+  /**
+   * 尽力而为地应用一组偏好：模型不存在/未配置凭据时保留当前选择（静默），
+   * 不打断会话切换主流程。受限工作区没有可放行的写工具，「完全访问」
+   * 无意义 → 一律归一为默认权限，也避免上一项目的 full 模式残留。
+   */
+  private async applyPrefs(prefs: SessionPrefs | null): Promise<void> {
+    if (!prefs) return;
+    const mode =
+      prefs.permissionMode === "full" && this.host.getTrust() !== "trusted"
+        ? "default"
+        : prefs.permissionMode;
+    this.permissions.setMode(mode);
+    if (prefs.model) {
+      try {
+        await this.applyModelRef(prefs.model);
+      } catch {
+        /* 模型不在目录/无凭据：保留 pi 的选择 */
+      }
+    }
   }
 
   async authState(): Promise<AgentSnapshot["authState"]> {

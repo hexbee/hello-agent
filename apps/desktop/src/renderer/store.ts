@@ -70,8 +70,6 @@ export type StoreState = {
   banner: { kind: "error" | "info"; text: string } | null;
   /** 设置页（含 Provider 凭据配置）弹层。 */
   settingsOpen: boolean;
-  /** 打开未信任目录时的信任级别确认弹窗（替代原 gate 首页）。 */
-  trustDialogOpen: boolean;
 };
 
 // ── thinking 耗时持久化（localStorage）─────────────────────────────────
@@ -123,7 +121,6 @@ const initialState: StoreState = {
   projects: [],
   banner: null,
   settingsOpen: false,
-  trustDialogOpen: false,
 };
 
 class Store {
@@ -171,11 +168,15 @@ class Store {
     }
   }
 
-  /** 启动时若有已保存项目：载入项目树并自动打开最近的项目；无项目也直接进入主界面。 */
+  /** 启动时若有已保存项目：载入项目树并自动打开最近打开的项目；无项目也直接进入主界面。 */
   private async autoEnter(): Promise<void> {
     try {
       await this.refreshProjectSessions();
-      const latest = this.state.projects[0]?.cwd;
+      // 最近打开的项目由主进程单独记录（lastOpened）；侧边栏顺序与打开
+      // 顺序解耦，切换项目不会把项目顶到最前。
+      const r = unwrap(await api().projects.list());
+      const latest =
+        r.lastOpened && r.projects.includes(r.lastOpened) ? r.lastOpened : r.projects[0];
       if (!latest) {
         // 没有任何项目：直接进入 agent 对话页（空态），不展示 gate 首页。
         this.set({ phase: "ready" });
@@ -192,27 +193,12 @@ class Store {
       const r = unwrap(await api().workspace.pickAndOpen());
       this.set({ cwd: r.cwd, trust: r.trust as TrustLevel });
       // 主进程已把新目录记入 projects（persist），立刻重拉项目树，
-      // 让侧边栏立即看到它，无需重进才刷新。
+      // 让侧边栏立即看到它（主进程按最近使用排序，新项目在最前）。
       await this.refreshProjectSessions();
-      // 已信任则直接进入新工作区；否则弹出信任确认（代替原 gate 首页）。
-      if (this.state.trust === "untrusted") {
-        this.set({ trustDialogOpen: true });
-      } else {
-        await this.enterWorkspace();
-      }
+      // 打开即信任：直接进入新工作区，不再弹信任确认。
+      await this.enterWorkspace();
     } catch {
       /* user cancelled or error — stay on ready */
-    }
-  }
-
-  async setTrust(trust: "restricted" | "trusted"): Promise<void> {
-    try {
-      const r = unwrap(await api().workspace.setTrust(trust));
-      this.set({ cwd: r.cwd, trust: r.trust as TrustLevel, trustDialogOpen: false });
-      await this.enterWorkspace();
-    } catch (e) {
-      this.set({ banner: { kind: "error", text: String(e) } });
-      this.set({ trustDialogOpen: false });
     }
   }
 
@@ -270,33 +256,19 @@ class Store {
   async refreshProjectSessions(): Promise<void> {
     try {
       const fresh = unwrap(await api().projects.sessions());
-      // 主进程按「最近使用」排序，切项目会把它挪到最前；侧边栏不应随之
-      // 跳动，因此沿用已有显示顺序，仅把新出现的项目追加到末尾。
-      const prev = this.state.projects;
-      const byPath = new Map(fresh.map((p) => [p.cwd, p]));
-      const merged = prev
-        .filter((p) => byPath.has(p.cwd))
-        .map((p) => byPath.get(p.cwd)!);
-      for (const p of fresh) {
-        if (!merged.some((q) => q.cwd === p.cwd)) merged.push(p);
-      }
-      this.set({ projects: merged });
+      // 主进程的顺序是稳定的：仅新项目置顶、用户上移/下移才会变化；
+      // 切换项目/跨项目切会话不再把项目顶到最前，直接采用该顺序。
+      this.set({ projects: fresh });
     } catch (e) {
       console.warn("[projects] 刷新失败:", e);
     }
   }
 
-  /** 切换到已保存的项目（不走文件夹选择器）；未授权信任时弹出信任确认（代替 gate 首页）。 */
+  /** 切换到已保存的项目（不走文件夹选择器）。打开即信任，直接恢复 runtime。 */
   async openProject(cwd: string): Promise<void> {
     try {
       const r = unwrap(await api().projects.open(cwd));
       this.set({ cwd: r.cwd, trust: r.trust as TrustLevel });
-      if (r.trust === "untrusted") {
-        // 先拉一次项目树让侧边栏可见，再弹信任确认。
-        await this.refreshProjectSessions();
-        this.set({ phase: "ready", trustDialogOpen: true });
-        return;
-      }
       await this.refreshSnapshot();
       this.set({ phase: "ready" });
       await this.refreshSessions();

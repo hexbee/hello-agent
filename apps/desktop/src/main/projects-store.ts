@@ -21,6 +21,8 @@ export interface ProjectSessions {
 
 export class ProjectsStore {
   private cwds: string[] = [];
+  /** 最近打开的项目（仅供启动恢复；不影响侧边栏显示顺序）。 */
+  private lastOpenedCwd: string | null = null;
 
   constructor(
     private readonly file: string,
@@ -33,26 +35,45 @@ export class ProjectsStore {
     try {
       const raw = JSON.parse(readFileSync(this.file, "utf8")) as {
         projects?: unknown;
+        lastOpened?: unknown;
       };
       this.cwds = Array.isArray(raw.projects)
         ? raw.projects.filter((p): p is string => typeof p === "string")
         : [];
+      this.lastOpenedCwd =
+        typeof raw.lastOpened === "string" && this.cwds.includes(raw.lastOpened)
+          ? raw.lastOpened
+          : null;
     } catch {
       this.cwds = [];
+      this.lastOpenedCwd = null;
     }
   }
 
   private save(): void {
-    writeFileSync(this.file, JSON.stringify({ projects: this.cwds }, null, 2));
+    writeFileSync(
+      this.file,
+      JSON.stringify({ projects: this.cwds, lastOpened: this.lastOpenedCwd }, null, 2),
+    );
   }
 
   list(): string[] {
     return [...this.cwds];
   }
 
-  /** Record (or bump to most-recent) after a successful workspace open. */
+  /** 最近打开的项目（启动恢复用）；无记录时回退列表第一个。 */
+  lastOpened(): string | null {
+    return this.lastOpenedCwd ?? this.cwds[0] ?? null;
+  }
+
+  /**
+   * 记录一次项目打开：仅新项目插入列表最前（侧边栏置顶可见）；
+   * 已有项目保持原位——切换项目/跨项目切会话不应打乱用户排好的顺序。
+   * 同时更新 lastOpened，供下次启动恢复到最近工作的项目。
+   */
   add(cwd: string): void {
-    this.cwds = [cwd, ...this.cwds.filter((p) => p !== cwd)];
+    if (!this.cwds.includes(cwd)) this.cwds = [cwd, ...this.cwds];
+    this.lastOpenedCwd = cwd;
     this.save();
   }
 
@@ -62,6 +83,7 @@ export class ProjectsStore {
    */
   remove(cwd: string): void {
     this.cwds = this.cwds.filter((p) => p !== cwd);
+    if (this.lastOpenedCwd === cwd) this.lastOpenedCwd = null;
     this.save();
   }
 

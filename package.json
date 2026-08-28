@@ -14,6 +14,8 @@
     "probe:isolation": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/isolation-probe.ts",
     "probe:permission": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/permission-probe.ts",
     "probe:session-rebind": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/session-rebind-probe.ts",
+    "probe:session-prefs": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/session-prefs-probe.ts",
+    "probe:projects-order": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/projects-order-probe.ts",
     "probe:dispose-rebuild": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/dispose-rebuild-probe.ts",
     "probe:delta-stress": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/delta-stress-probe.ts",
     "probe:sandbox": "bash spikes/probes/sandbox-probe.sh",
@@ -23,7 +25,7 @@
     "probe:watchdog": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/watchdog-probe.ts",
     "probe:trust-persist": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/trust-persist-probe.ts",
     "probe:e2e-llm": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/e2e-llm-probe.ts",
-    "probe:all": "pnpm probe:isolation && pnpm probe:permission && pnpm probe:session-rebind && pnpm probe:dispose-rebuild && pnpm probe:delta-stress && pnpm probe:sandbox && pnpm probe:e2e-llm && pnpm probe:watchdog && pnpm probe:trust-persist",
+    "probe:all": "pnpm probe:isolation && pnpm probe:permission && pnpm probe:session-rebind && pnpm probe:session-prefs && pnpm probe:projects-order && pnpm probe:dispose-rebuild && pnpm probe:delta-stress && pnpm probe:sandbox && pnpm probe:e2e-llm && pnpm probe:watchdog && pnpm probe:trust-persist",
     "probe:package": "bash spikes/probes/package-probe.sh"
   },
   "packageManager": "pnpm@11.21.0"
