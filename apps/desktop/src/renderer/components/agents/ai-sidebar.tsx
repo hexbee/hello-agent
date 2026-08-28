@@ -47,6 +47,8 @@ export interface SidebarResource {
   kind: SidebarResourceKind;
   children?: SidebarResource[];
   disabled?: boolean;
+  /** 行内忙碌（如会话正在运行）：宿主可通过 renderTrailingAction 渲染指示器。 */
+  busy?: boolean;
 }
 
 export type SidebarResourceDropPosition = "before" | "inside" | "after";

@@ -49,6 +49,26 @@ export type PendingApproval = {
 
 export type SessionInfo = { file: string; name?: string; modified?: number };
 
+/**
+ * 乐观会话：新会话首条消息发出但 .jsonl 尚未落盘（pi 首条 assistant 消息
+ * 才写盘），侧边栏先用占位条目顶上 —— 名字取问题开头字符，running 时
+ * 行尾转圈；文件落盘后占位名兜底显示，直到 LLM 标题（session.renamed）接管。
+ */
+export type OptimisticSession = {
+  sessionId: string;
+  projectCwd: string;
+  name: string;
+  running: boolean;
+};
+
+/** 乐观标题长度上限：只取问题开头有限字符，侧边栏再用 CSS 截断。 */
+const OPTIMISTIC_TITLE_MAX = 24;
+
+/** pi 会话文件名形如 "{timestamp}_{sessionId}.jsonl"，据此把落盘文件对回会话 id。 */
+export function fileMatchesSession(file: string | undefined, sessionId: string): boolean {
+  return !!file && file.endsWith(`_${sessionId}.jsonl`);
+}
+
 export type StoreState = {
   phase: "gate" | "ready";
   cwd: string;
@@ -67,6 +87,8 @@ export type StoreState = {
   forkCandidates: Array<{ entryId: string; text: string }>;
   /** 已打开过的项目及其会话（侧边栏项目树数据源）。 */
   projects: ProjectSessions[];
+  /** 乐观会话占位条目（尚未落盘的新会话），按创建时间新在前。 */
+  optimisticSessions: OptimisticSession[];
   banner: { kind: "error" | "info"; text: string } | null;
   /** 设置页（含 Provider 凭据配置）弹层。 */
   settingsOpen: boolean;
@@ -119,6 +141,7 @@ const initialState: StoreState = {
   authProviders: [],
   forkCandidates: [],
   projects: [],
+  optimisticSessions: [],
   banner: null,
   settingsOpen: false,
 };
@@ -259,9 +282,71 @@ class Store {
       // 主进程的顺序是稳定的：仅新项目置顶、用户上移/下移才会变化；
       // 切换项目/跨项目切会话不再把项目顶到最前，直接采用该顺序。
       this.set({ projects: fresh });
+      this.reconcileOptimisticSessions(fresh);
     } catch (e) {
       console.warn("[projects] 刷新失败:", e);
     }
+  }
+
+  /**
+   * 乐观会话对账（每次项目树刷新后）：
+   * - 文件已落盘且已有名字 → 移除占位（真实标题接管）；
+   * - 文件已落盘但未命名 → 保留占位名兜底显示，直到重命名/LLM 标题到达；
+   * - 未落盘且仍在运行 → 保留（首轮还在跑）；
+   * - 未落盘且已结束 → 移除（首轮即失败，pi 根本没写文件，无会话可显示）。
+   */
+  private reconcileOptimisticSessions(fresh: ProjectSessions[]): void {
+    const keep: OptimisticSession[] = [];
+    for (const o of this.state.optimisticSessions) {
+      const real = fresh
+        .flatMap((p) => p.sessions)
+        .find((sess) => fileMatchesSession(sess.file, o.sessionId));
+      if (real ? !real.name : o.running) keep.push(o);
+    }
+    if (keep.length !== this.state.optimisticSessions.length) {
+      this.set({ optimisticSessions: keep });
+    }
+  }
+
+  /**
+   * 新会话首条消息发出：当前会话尚未出现在侧边栏列表（未落盘）时，
+   * 添加乐观占位条目（名字 = 问题开头字符）。已存在则仅恢复 running。
+   * 返回是否为新增条目（preflight 拒绝时回滚用）。
+   */
+  private addOptimisticSession(text: string): OptimisticSession | null {
+    const sess = this.state.session;
+    if (!sess) return null;
+    const proj = this.state.projects.find((p) => p.cwd === this.state.cwd);
+    if (sess.file && proj?.sessions.some((x) => x.file === sess.file)) {
+      return null; // 已在侧边栏，无需占位
+    }
+    const existing = this.state.optimisticSessions.find(
+      (o) => o.sessionId === sess.id,
+    );
+    const entry: OptimisticSession = existing
+      ? { ...existing, running: true }
+      : {
+          sessionId: sess.id,
+          projectCwd: this.state.cwd,
+          name: text.slice(0, OPTIMISTIC_TITLE_MAX),
+          running: true,
+        };
+    this.set({
+      optimisticSessions: [
+        entry,
+        ...this.state.optimisticSessions.filter((o) => o.sessionId !== sess.id),
+      ],
+    });
+    return existing ? null : entry;
+  }
+
+  private removeOptimisticSession(sessionId: string): void {
+    if (!this.state.optimisticSessions.some((o) => o.sessionId === sessionId)) return;
+    this.set({
+      optimisticSessions: this.state.optimisticSessions.filter(
+        (o) => o.sessionId !== sessionId,
+      ),
+    });
   }
 
   /** 切换到已保存的项目（不走文件夹选择器）。打开即信任，直接恢复 runtime。 */
@@ -641,6 +726,18 @@ class Store {
           );
           this.set({ entries });
         }
+        // 侧边栏占位会话行尾的转圈指示器随之停止（后续由对账决定去留）。
+        if (
+          e.state !== "running" &&
+          this.state.optimisticSessions.some((o) => o.running)
+        ) {
+          this.set({
+            optimisticSessions: this.state.optimisticSessions.map((o) => ({
+              ...o,
+              running: false,
+            })),
+          });
+        }
         // pi 的会话文件是懒落盘的：首条 assistant 消息到达时才写入 .jsonl。
         // 一轮对话结束（idle/failed）后文件已存在，此时刷新侧边栏，
         // 否则新会话要等到下次切换会话才会出现在列表里。
@@ -658,6 +755,8 @@ class Store {
         if (this.state.session) {
           this.set({ session: { ...this.state.session, name: e.name } });
         }
+        // 真实标题已落盘，乐观占位名使命完成。
+        this.removeOptimisticSession(e.sessionId);
         void this.refreshSessions().catch(() => undefined);
         break;
       }
@@ -711,6 +810,8 @@ class Store {
       ],
       banner: null,
     });
+    // 新会话立即占位侧边栏（拒绝/失败时回滚新增条目）。
+    const added = this.addOptimisticSession(trimmed);
     try {
       const r = unwrap(await api().agent.prompt(trimmed));
       if (!r.accepted) {
@@ -721,6 +822,7 @@ class Store {
           ),
           banner: { kind: "error", text: "Agent 正在运行，消息未发送" },
         });
+        if (added) this.removeOptimisticSession(added.sessionId);
       }
     } catch (e) {
       this.set({
@@ -729,6 +831,7 @@ class Store {
         ),
         banner: { kind: "error", text: String(e) },
       });
+      if (added) this.removeOptimisticSession(added.sessionId);
     }
   }
 

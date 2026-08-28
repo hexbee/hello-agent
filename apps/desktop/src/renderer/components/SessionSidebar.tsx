@@ -8,6 +8,7 @@ import {
   FolderMinus,
   FolderPlus,
   GitPullRequest,
+  Loader,
   MessageSquare,
   MoreHorizontal,
   Pencil,
@@ -36,7 +37,7 @@ import {
   type SidebarResourceMenuControls,
   type SidebarResourceMove,
 } from "./agents/ai-sidebar";
-import { store, useStore, type StoreState } from "../store";
+import { store, useStore, fileMatchesSession, type StoreState } from "../store";
 import { isMac } from "../platform";
 import { useTouchCapable } from "../lib/hooks/use-touch-capable";
 
@@ -55,18 +56,43 @@ const MENU_ACTION_CLASS =
 const HEADER_BUTTON_CLASS =
   "grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground opacity-0 outline-none transition hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/header:opacity-100";
 
-/** store 的 projects → 项目树：项目为父节点（kind: project），会话为子节点（kind: file）。 */
+/** store 的 projects → 项目树：项目为父节点（kind: project），会话为子节点（kind: file）。
+ *  乐观会话（新会话首条消息已发出、.jsonl 未落盘）作为占位子节点插在最前
+ *  （与落盘后按 modified 倒序的位置一致，落盘时行不跳动）：名字用问题开头字符，
+ *  落盘未命名时占位名兜底显示，直到 LLM 标题接管；busy 标记渲染运行中指示器。 */
 function toTree(s: StoreState): SidebarResource[] {
-  return s.projects.map((p) => ({
-    id: p.cwd,
-    label: p.name || basename(p.cwd),
-    kind: "project" as const,
-    children: p.sessions.map((sess) => ({
-      id: sess.file,
-      label: sess.name || basename(sess.file).replace(/\.jsonl$/, ""),
-      kind: "file" as const,
-    })),
-  }));
+  return s.projects.map((p) => {
+    const pending = s.optimisticSessions.filter(
+      (o) =>
+        o.projectCwd === p.cwd &&
+        !p.sessions.some((sess) => fileMatchesSession(sess.file, o.sessionId)),
+    );
+    return {
+      id: p.cwd,
+      label: p.name || basename(p.cwd),
+      kind: "project" as const,
+      children: [
+        ...pending.map((o) => ({
+          id: `pending:${o.sessionId}`,
+          label: o.name,
+          kind: "file" as const,
+          busy: o.running,
+        })),
+        ...p.sessions.map((sess) => {
+          const opt = s.optimisticSessions.find((o) =>
+            fileMatchesSession(sess.file, o.sessionId),
+          );
+          return {
+            id: sess.file,
+            label:
+              sess.name || opt?.name || basename(sess.file).replace(/\.jsonl$/, ""),
+            kind: "file" as const,
+            busy: opt?.running,
+          };
+        }),
+      ],
+    };
+  });
 }
 
 export function SessionSidebar() {
@@ -437,10 +463,19 @@ export function SessionSidebar() {
                     <MessageSquare aria-hidden="true" className="size-4 shrink-0" />
                   )
                 }
-                renderTrailingAction={(item) =>
+                renderTrailingAction={(item) => {
+                  // 会话行运行中：行尾旋转指示器（新会话发出首条消息即出现）。
+                  if (item.kind !== "project") {
+                    return item.busy ? (
+                      <Loader
+                        aria-hidden="true"
+                        className="size-3.5 shrink-0 animate-spin text-accent"
+                      />
+                    ) : undefined;
+                  }
                   // 仅项目行提供「新对话」快捷钮：一键切目录 + 新建会话。
                   // 显隐样式与行内 ⋯ 钮完全一致（hover 显示、触屏常显）。
-                  item.kind !== "project" ? undefined : (
+                  return (
                     <button
                       type="button"
                       draggable={false}
@@ -459,7 +494,7 @@ export function SessionSidebar() {
                       <SquarePen aria-hidden="true" className="size-4" />
                     </button>
                   )
-                }
+                }}
                 renderMenu={renderMenu}
                 ariaLabel="项目与会话"
               />
