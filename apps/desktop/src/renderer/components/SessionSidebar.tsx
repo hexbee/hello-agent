@@ -1,10 +1,15 @@
 import {
   ArrowDown,
   ArrowUp,
+  ChevronDown,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Clock3,
   FolderMinus,
+  FolderPlus,
   GitPullRequest,
   MessageSquare,
+  MoreHorizontal,
   Pencil,
   Plug,
   Plus,
@@ -15,11 +20,16 @@ import {
 import { useState } from "react";
 import {
   AnimatedSidebar,
-  AnimatedSidebarGroupLabel,
   AnimatedSidebarMenu,
   AnimatedSidebarMenuButton,
   AnimatedSidebarMenuItem,
 } from "./motion/animated-sidebar";
+import {
+  MorphPopover,
+  MorphPopoverContent,
+  MorphPopoverTrigger,
+} from "./motion/popover-morph";
+import { cn } from "../lib/utils";
 import {
   AISidebar,
   type SidebarResource,
@@ -32,6 +42,17 @@ import { isMac } from "../platform";
 function basename(p: string): string {
   return p.split("/").filter(Boolean).pop() ?? p;
 }
+
+/** 每个项目展开时默认可见的会话数；「展开更多」每次追加同样数量。 */
+const SESSION_PAGE_SIZE = 5;
+
+/** 「项目」⋯ 菜单的动作项样式（与行内右键菜单一致）。 */
+const MENU_ACTION_CLASS =
+  "flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-xs text-foreground outline-none transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40";
+
+/** 「项目」分区头右侧小圆钮的共用样式。 */
+const HEADER_BUTTON_CLASS =
+  "grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring";
 
 /** store 的 projects → 项目树：项目为父节点（kind: project），会话为子节点（kind: file）。 */
 function toTree(s: StoreState): SidebarResource[] {
@@ -51,6 +72,17 @@ export function SessionSidebar() {
   const s = useStore();
   const activeId = s.session?.file ?? null;
   const items = toTree(s);
+  // 「项目」分区整体折叠（Codex 侧边栏的「项目 ⌄」）。
+  const [sectionOpen, setSectionOpen] = useState(true);
+  // 「项目」⋯ 菜单。
+  const [projectsMenuOpen, setProjectsMenuOpen] = useState(false);
+  // 受控的各项目展开集合：AISidebar 负责行渲染，本层持有状态以支持「全部展开/折叠」。
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(
+    () => new Set(s.projects.map((p) => p.cwd)),
+  );
+  const anyExpanded = items.some((p) => expandedIds.has(p.id));
+  const allExpanded =
+    items.length > 0 && items.every((p) => expandedIds.has(p.id));
 
   const findProjectOf = (file: string): string | null =>
     s.projects.find((p) => p.sessions.some((sess) => sess.file === file))?.cwd ?? null;
@@ -286,30 +318,120 @@ export function SessionSidebar() {
             播报区等）的包含块，避免其以 ICB 定位逃出 overflow 裁剪，把整个
             文档撑出多余的右侧滚动条。 */}
         <div className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2">
-          <AnimatedSidebarGroupLabel className="mb-1 h-8 px-2 text-xs font-medium normal-case tracking-normal">
-            项目
-          </AnimatedSidebarGroupLabel>
-          {items.length === 0 ? (
-            <p className="px-2 py-4 text-xs text-muted-foreground">暂无项目，点击「项目」打开文件夹</p>
-          ) : (
-            // 不用 key=项目数 重挂载：否则增删项目会重置整个展开状态。AISidebar
-            // 内部记住折叠状态，仅对真正新增的项目自动展开（见 ai-sidebar）。
-            <AISidebar
-              items={items}
-              defaultExpandedIds={items.map((p) => p.id)}
-              activeId={activeId}
-              onActiveChange={select}
-              onMove={onMove}
-              onRename={rename}
-              renderIcon={(item) =>
-                item.kind === "project" ? undefined : (
-                  <MessageSquare aria-hidden="true" className="size-4 shrink-0" />
-                )
-              }
-              renderMenu={renderMenu}
-              ariaLabel="项目与会话"
-            />
-          )}
+          {/* 「项目」分区头：点击标题折叠/展开整区；右侧 ⋯ 菜单与 + 新建项目
+              （对应 Codex 侧边栏的 项目 ⌄ … + ）。 */}
+          <div className="mb-1 flex h-8 items-center gap-0.5 pl-2 pr-0.5">
+            <button
+              type="button"
+              aria-expanded={sectionOpen}
+              aria-label={sectionOpen ? "折叠项目列表" : "展开项目列表"}
+              onClick={() => setSectionOpen((open) => !open)}
+              className="flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-lg text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <ChevronDown
+                aria-hidden="true"
+                className={cn(
+                  "size-3.5 shrink-0 transition-transform",
+                  !sectionOpen && "-rotate-90",
+                )}
+              />
+              <span className="truncate">项目</span>
+            </button>
+            <MorphPopover
+              open={projectsMenuOpen}
+              onOpenChange={setProjectsMenuOpen}
+            >
+              <MorphPopoverTrigger>
+                <button
+                  type="button"
+                  aria-label="项目菜单"
+                  title="项目菜单"
+                  className={HEADER_BUTTON_CLASS}
+                >
+                  <MoreHorizontal aria-hidden="true" className="size-4" />
+                </button>
+              </MorphPopoverTrigger>
+              <MorphPopoverContent
+                side="bottom"
+                align="end"
+                sideOffset={8}
+                radius={12}
+                className="w-44 p-1.5"
+              >
+                <button
+                  type="button"
+                  disabled={!allExpanded}
+                  onClick={() => {
+                    setProjectsMenuOpen(false);
+                    setExpandedIds(new Set(items.map((p) => p.id)));
+                  }}
+                  className={MENU_ACTION_CLASS}
+                >
+                  <ChevronsUpDown aria-hidden="true" className="size-3.5 shrink-0" />
+                  全部展开
+                </button>
+                <button
+                  type="button"
+                  disabled={!anyExpanded}
+                  onClick={() => {
+                    setProjectsMenuOpen(false);
+                    setExpandedIds(new Set());
+                  }}
+                  className={MENU_ACTION_CLASS}
+                >
+                  <ChevronsDownUp aria-hidden="true" className="size-3.5 shrink-0" />
+                  全部折叠
+                </button>
+                <div aria-hidden="true" className="my-1 h-px bg-border" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProjectsMenuOpen(false);
+                    void store.openWorkspace();
+                  }}
+                  className={MENU_ACTION_CLASS}
+                >
+                  <FolderPlus aria-hidden="true" className="size-3.5 shrink-0" />
+                  打开项目文件夹
+                </button>
+              </MorphPopoverContent>
+            </MorphPopover>
+            <button
+              type="button"
+              aria-label="新建项目"
+              title="新建项目（打开文件夹）"
+              onClick={() => void store.openWorkspace()}
+              className={HEADER_BUTTON_CLASS}
+            >
+              <Plus aria-hidden="true" className="size-4" />
+            </button>
+          </div>
+          {sectionOpen ? (
+            items.length === 0 ? (
+              <p className="px-2 py-4 text-xs text-muted-foreground">暂无项目，点击「项目」打开文件夹</p>
+            ) : (
+              // 不用 key=项目数 重挂载：否则增删项目会重置整个展开状态。AISidebar
+              // 内部记住折叠状态，仅对真正新增的项目自动展开（见 ai-sidebar）。
+              <AISidebar
+                items={items}
+                expandedIds={expandedIds}
+                onExpandedChange={setExpandedIds}
+                visibleChildren={SESSION_PAGE_SIZE}
+                showMoreLabel="展开更多"
+                activeId={activeId}
+                onActiveChange={select}
+                onMove={onMove}
+                onRename={rename}
+                renderIcon={(item) =>
+                  item.kind === "project" ? undefined : (
+                    <MessageSquare aria-hidden="true" className="size-4 shrink-0" />
+                  )
+                }
+                renderMenu={renderMenu}
+                ariaLabel="项目与会话"
+              />
+            )
+          ) : null}
         </div>
 
         {s.forkCandidates.length > 0 && <ForkSection />}

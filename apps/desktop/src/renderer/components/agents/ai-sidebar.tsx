@@ -5,6 +5,7 @@ import {
   ArrowDown,
   ArrowUp,
   Bookmark,
+  ChevronDown,
   FileText,
   Folder,
   FolderInput,
@@ -87,6 +88,16 @@ export interface AISidebarProps {
   defaultActiveId?: string | null;
   onActiveChange?: (id: string) => void;
   defaultExpandedIds?: string[];
+  /** 受控展开集合；传入后展开状态完全由外部驱动，配合 onExpandedChange 使用。 */
+  expandedIds?: Set<string>;
+  onExpandedChange?: (ids: Set<string>) => void;
+  /**
+   * 展开容器默认可见的子节点上限（超出部分收进「展开更多」行，可分批展开）。
+   * 数字作用于所有容器，函数按容器定制；undefined / ≤0 表示不限制。
+   */
+  visibleChildren?: number | ((item: SidebarResource) => number | undefined);
+  /** 「展开更多」行文案。 */
+  showMoreLabel?: string;
   renderIcon?: (item: SidebarResource) => ReactNode;
   renderMenu?: (
     item: SidebarResource,
@@ -101,6 +112,16 @@ interface FlatResource {
   depth: number;
   parentId: string | null;
 }
+
+/** 「展开更多」行：某容器的子节点超出可见上限后的剩余提示。 */
+interface FlatMoreRow {
+  kind: "more";
+  parentId: string;
+  depth: number;
+  hiddenCount: number;
+}
+
+type FlatEntry = { kind: "row"; row: FlatResource } | FlatMoreRow;
 
 interface DropTarget {
   id: string | null;
@@ -149,14 +170,31 @@ function flattenResources(
   expanded: Set<string>,
   depth = 0,
   parentId: string | null = null,
-): FlatResource[] {
+  visibleChildCount?: (item: SidebarResource) => number | undefined,
+): FlatEntry[] {
   return items.flatMap((item) => {
-    const row = { item, depth, parentId };
-    if (!item.children?.length || !expanded.has(item.id)) return [row];
-    return [
-      row,
-      ...flattenResources(item.children, expanded, depth + 1, item.id),
-    ];
+    const entry: FlatEntry = { kind: "row", row: { item, depth, parentId } };
+    if (!item.children?.length || !expanded.has(item.id)) return [entry];
+    // 展开时按可见上限截断子节点；hidden > 0 则在子节点末尾追加「展开更多」行。
+    const visible = visibleChildCount?.(item);
+    const children =
+      visible === undefined ? item.children : item.children.slice(0, visible);
+    const childEntries = flattenResources(
+      children,
+      expanded,
+      depth + 1,
+      item.id,
+      visibleChildCount,
+    );
+    const hidden = item.children.length - children.length;
+    if (hidden <= 0) return [entry, ...childEntries];
+    const more: FlatMoreRow = {
+      kind: "more",
+      parentId: item.id,
+      depth: depth + 1,
+      hiddenCount: hidden,
+    };
+    return [entry, ...childEntries, more];
   });
 }
 
@@ -608,6 +646,56 @@ function ResourceRow({
   );
 }
 
+/**
+ * 「展开更多」行：缩进与子节点对齐，点击后当前容器再展示一批子节点。
+ * 不参与 roving tabindex / 拖拽，仅是一颗普通按钮。
+ */
+function ShowMoreRow({
+  depth,
+  hiddenCount,
+  label,
+  onShowMore,
+}: {
+  depth: number;
+  hiddenCount: number;
+  label: string;
+  onShowMore: () => void;
+}) {
+  const reduce = useReducedMotion() ?? false;
+  return (
+    <motion.div
+      layout="position"
+      transition={reduce ? { duration: 0 } : SPRING_LAYOUT}
+    >
+      <button
+        type="button"
+        onClick={onShowMore}
+        aria-label={`${label}（还有 ${hiddenCount} 个未显示）`}
+        style={{ paddingLeft: `${12 + depth * 16}px` }}
+        className={cn(
+          "flex min-h-9 w-full min-w-0 cursor-pointer items-center gap-2.5 rounded-xl pr-3 text-sm outline-none",
+          "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+          "focus-visible:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+        )}
+      >
+        <span
+          aria-hidden="true"
+          className="grid size-5 shrink-0 place-items-center"
+        >
+          <ChevronDown className="size-4" />
+        </span>
+        <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+        <span
+          aria-hidden="true"
+          className="shrink-0 text-xs text-muted-foreground/70 tabular-nums"
+        >
+          {hiddenCount}
+        </span>
+      </button>
+    </motion.div>
+  );
+}
+
 export function AISidebar({
   items,
   defaultItems = [],
@@ -619,6 +707,10 @@ export function AISidebar({
   defaultActiveId = null,
   onActiveChange,
   defaultExpandedIds = [],
+  expandedIds: expandedIdsProp,
+  onExpandedChange,
+  visibleChildren,
+  showMoreLabel = "展开更多",
   renderIcon,
   renderMenu,
   ariaLabel = "Resources",
@@ -626,9 +718,24 @@ export function AISidebar({
 }: AISidebarProps) {
   const [internalItems, setInternalItems] = useState(items ?? defaultItems);
   const [internalActiveId, setInternalActiveId] = useState(defaultActiveId);
-  const [expandedIds, setExpandedIds] = useState(
+  const [internalExpandedIds, setInternalExpandedIds] = useState(
     () => new Set(defaultExpandedIds),
   );
+  // 受控/非受控双模式：传入 expandedIds 时由外部驱动展开集合，
+  // 便于宿主实现「全部展开 / 全部折叠」。
+  const expandedIds = expandedIdsProp ?? internalExpandedIds;
+  const setExpandedIds = useCallback(
+    (updater: (current: Set<string>) => Set<string>) => {
+      if (expandedIdsProp && onExpandedChange) {
+        onExpandedChange(updater(expandedIdsProp));
+      } else {
+        setInternalExpandedIds(updater);
+      }
+    },
+    [expandedIdsProp, onExpandedChange],
+  );
+  // 每个容器的「展开更多」进度（已额外展开的批次数）。
+  const [revealed, setRevealed] = useState<Record<string, number>>({});
   const [focusedId, setFocusedId] = useState<string | null>(
     activeId ?? defaultActiveId,
   );
@@ -673,11 +780,72 @@ export function AISidebar({
       seenTopIdsRef.current = new Set([...seenTopIdsRef.current, ...newIds]);
       setExpandedIds((cur) => new Set([...cur, ...newIds]));
     }
-  }, [items]);
+  }, [items, setExpandedIds]);
 
+  // 折叠的容器重置「展开更多」进度：重新展开时只显示第一批（有限个）子项。
+  // 用 effect 对比前后展开集合，覆盖 toggle 与受控折叠（如「全部折叠」）两条路径。
+  const prevExpandedRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const prev = prevExpandedRef.current;
+    prevExpandedRef.current = expandedIds;
+    if (!prev) return;
+    const collapsed = [...prev].filter((id) => !expandedIds.has(id));
+    if (!collapsed.length) return;
+    setRevealed((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const id of collapsed) {
+        if (id in next) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [expandedIds]);
+
+  // 容器被移除后清掉残留的展开进度，重新添加时从头计数。
+  useEffect(() => {
+    setRevealed((current) => {
+      const live = new Set(renderedItems.map((it) => it.id));
+      const stale = Object.keys(current).filter((id) => !live.has(id));
+      if (!stale.length) return current;
+      const next = { ...current };
+      for (const id of stale) delete next[id];
+      return next;
+    });
+  }, [renderedItems]);
+
+  // 可见子节点数：批次 × (1 + 已展开批次数)，夹在子节点总数内；
+  // 无隐藏子节点时返回 undefined（不截断、无「展开更多」行）。
+  const visibleChildCount = useCallback(
+    (item: SidebarResource): number | undefined => {
+      if (!item.children?.length) return undefined;
+      const batch =
+        typeof visibleChildren === "function"
+          ? visibleChildren(item)
+          : visibleChildren;
+      if (!batch || batch < 1) return undefined;
+      const shown = Math.min(
+        batch * (1 + (revealed[item.id] ?? 0)),
+        item.children.length,
+      );
+      return shown >= item.children.length ? undefined : shown;
+    },
+    [revealed, visibleChildren],
+  );
+
+  const renderList = useMemo(
+    () =>
+      flattenResources(renderedItems, expandedIds, 0, null, visibleChildCount),
+    [expandedIds, renderedItems, visibleChildCount],
+  );
+
+  // 键盘导航 / 拖拽只关心资源行；「展开更多」行只参与渲染。
   const flat = useMemo(
-    () => flattenResources(renderedItems, expandedIds),
-    [expandedIds, renderedItems],
+    () =>
+      renderList.flatMap((entry) => (entry.kind === "row" ? [entry.row] : [])),
+    [renderList],
   );
 
   // Which row carries the roving tabindex is resolved during render, never in
@@ -771,14 +939,44 @@ export function AISidebar({
     [activeId, onActiveChange],
   );
 
-  const toggle = useCallback((id: string) => {
-    setExpandedIds((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
+  const toggle = useCallback(
+    (id: string) => {
+      setExpandedIds((current) => {
+        const next = new Set(current);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+    },
+    [setExpandedIds],
+  );
+
+  // 「展开更多」：当前容器再展示一批子节点，并播报剩余数量。
+  const revealMore = useCallback(
+    (more: { parentId: string; hiddenCount: number }) => {
+      const parent = findResource(renderedItems, more.parentId);
+      const batch = parent
+        ? typeof visibleChildren === "function"
+          ? visibleChildren(parent)
+          : visibleChildren
+        : undefined;
+      const step =
+        batch && batch > 0 ? Math.min(batch, more.hiddenCount) : more.hiddenCount;
+      setRevealed((current) => ({
+        ...current,
+        [more.parentId]: (current[more.parentId] ?? 0) + 1,
+      }));
+      const remaining = more.hiddenCount - step;
+      setAnnouncement(
+        parent
+          ? remaining > 0
+            ? `已展开 ${parent.label} 的 ${step} 个子项，还有 ${remaining} 个未显示。`
+            : `已展开 ${parent.label} 的全部子项。`
+          : "已展开更多子项。",
+      );
+    },
+    [renderedItems, visibleChildren],
+  );
 
   // The same four moves `Alt+Shift+Arrow` performs, handed to the row menu so
   // they survive on a device with no drag and no modifier keys.
@@ -837,7 +1035,7 @@ export function AISidebar({
 
       return commands;
     },
-    [flat, performMove],
+    [flat, performMove, setExpandedIds],
   );
 
   const handleKeyDown = useCallback(
@@ -928,7 +1126,7 @@ export function AISidebar({
         setMenuOpenId(row.item.id);
       }
     },
-    [expandedIds, flat, focusRow, performMove, select, toggle],
+    [expandedIds, flat, focusRow, performMove, select, setExpandedIds, toggle],
   );
 
   return (
@@ -961,89 +1159,99 @@ export function AISidebar({
       )}
     >
       <AnimatePresence initial={false}>
-        {flat.map((row) => (
-          <ResourceRow
-            key={row.item.id}
-            row={row}
-            active={selectedId === row.item.id}
-            expanded={expandedIds.has(row.item.id)}
-            focused={focusedRow === row.item.id}
-            draggingId={draggingId}
-            dropTarget={dropTarget}
-            menuOpen={menuOpenId === row.item.id}
-            moves={moveCommands(row)}
-            renaming={renamingId === row.item.id}
-            onFocus={() => setFocusedId(row.item.id)}
-            onSelect={() => select(row.item.id)}
-            onToggle={() => toggle(row.item.id)}
-            onKeyDown={(event) => handleKeyDown(event, row)}
-            onRenameStart={() => setRenamingId(row.item.id)}
-            onRenameCancel={() => setRenamingId(null)}
-            onRenameCommit={(label) => {
-              const trimmed = label.trim();
-              setRenamingId(null);
-              if (!trimmed || trimmed === row.item.label) return;
-              const before = renderedItems;
-              updateItems(renameResource(before, row.item.id, trimmed));
-              void Promise.resolve(onRename?.(row.item, trimmed)).catch(() => {
-                updateItems(before);
-                setAnnouncement(`Rename failed. ${row.item.label} was restored.`);
-              });
-            }}
-            onMenuOpenChange={(open) => {
-              setMenuOpenId(open ? row.item.id : null);
-              if (!open) focusRow(row.item.id);
-            }}
-            onDragStart={(event, id) => {
-              setDrag(id);
-              event.dataTransfer.effectAllowed = "move";
-              event.dataTransfer.setData("text/plain", id);
-            }}
-            onDragEnd={() => {
-              setDrag(null);
-              setTarget(null);
-            }}
-            onDragOver={(event, targetRow) => {
-              const did = draggingIdRef.current;
-              if (!did || did === targetRow.item.id) return;
-              const source = findResource(renderedItems, did);
-              if (source && containsResource(source, targetRow.item.id)) return;
-              event.preventDefault();
-              event.stopPropagation();
-              const rect = event.currentTarget.getBoundingClientRect();
-              const ratio = (event.clientY - rect.top) / rect.height;
-              const position =
-                !targetRow.item.disabled &&
-                canContain(targetRow.item) &&
-                ratio >= 0.25 &&
-                ratio <= 0.75
-                  ? "inside"
-                  : ratio < 0.5
-                    ? "before"
-                    : "after";
-              setTarget({ id: targetRow.item.id, position });
-            }}
-            onDrop={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              const did = draggingIdRef.current;
-              const target = dropTargetRef.current;
-              if (did && target) {
-                void performMove({
-                  itemId: did,
-                  targetId: target.id,
-                  position: target.position,
+        {renderList.map((entry) =>
+          entry.kind === "row" ? (
+            <ResourceRow
+              key={entry.row.item.id}
+              row={entry.row}
+              active={selectedId === entry.row.item.id}
+              expanded={expandedIds.has(entry.row.item.id)}
+              focused={focusedRow === entry.row.item.id}
+              draggingId={draggingId}
+              dropTarget={dropTarget}
+              menuOpen={menuOpenId === entry.row.item.id}
+              moves={moveCommands(entry.row)}
+              renaming={renamingId === entry.row.item.id}
+              onFocus={() => setFocusedId(entry.row.item.id)}
+              onSelect={() => select(entry.row.item.id)}
+              onToggle={() => toggle(entry.row.item.id)}
+              onKeyDown={(event) => handleKeyDown(event, entry.row)}
+              onRenameStart={() => setRenamingId(entry.row.item.id)}
+              onRenameCancel={() => setRenamingId(null)}
+              onRenameCommit={(label) => {
+                const trimmed = label.trim();
+                setRenamingId(null);
+                if (!trimmed || trimmed === entry.row.item.label) return;
+                const before = renderedItems;
+                updateItems(renameResource(before, entry.row.item.id, trimmed));
+                void Promise.resolve(onRename?.(entry.row.item, trimmed)).catch(() => {
+                  updateItems(before);
+                  setAnnouncement(`Rename failed. ${entry.row.item.label} was restored.`);
                 });
-              }
-            }}
-            renderIcon={renderIcon}
-            renderMenu={renderMenu}
-            setRef={(node) => {
-              if (node) rowRefs.current.set(row.item.id, node);
-              else rowRefs.current.delete(row.item.id);
-            }}
-          />
-        ))}
+              }}
+              onMenuOpenChange={(open) => {
+                setMenuOpenId(open ? entry.row.item.id : null);
+                if (!open) focusRow(entry.row.item.id);
+              }}
+              onDragStart={(event, id) => {
+                setDrag(id);
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", id);
+              }}
+              onDragEnd={() => {
+                setDrag(null);
+                setTarget(null);
+              }}
+              onDragOver={(event, targetRow) => {
+                const did = draggingIdRef.current;
+                if (!did || did === targetRow.item.id) return;
+                const source = findResource(renderedItems, did);
+                if (source && containsResource(source, targetRow.item.id)) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const rect = event.currentTarget.getBoundingClientRect();
+                const ratio = (event.clientY - rect.top) / rect.height;
+                const position =
+                  !targetRow.item.disabled &&
+                  canContain(targetRow.item) &&
+                  ratio >= 0.25 &&
+                  ratio <= 0.75
+                    ? "inside"
+                    : ratio < 0.5
+                      ? "before"
+                      : "after";
+                setTarget({ id: targetRow.item.id, position });
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const did = draggingIdRef.current;
+                const target = dropTargetRef.current;
+                if (did && target) {
+                  void performMove({
+                    itemId: did,
+                    targetId: target.id,
+                    position: target.position,
+                  });
+                }
+              }}
+              renderIcon={renderIcon}
+              renderMenu={renderMenu}
+              setRef={(node) => {
+                if (node) rowRefs.current.set(entry.row.item.id, node);
+                else rowRefs.current.delete(entry.row.item.id);
+              }}
+            />
+          ) : (
+            <ShowMoreRow
+              key={`more:${entry.parentId}`}
+              depth={entry.depth}
+              hiddenCount={entry.hiddenCount}
+              label={showMoreLabel}
+              onShowMore={() => revealMore(entry)}
+            />
+          ),
+        )}
       </AnimatePresence>
 
       {draggingId ? (
