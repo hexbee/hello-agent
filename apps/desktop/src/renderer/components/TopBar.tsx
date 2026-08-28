@@ -1,13 +1,7 @@
-import { ChevronRight, PanelLeft } from "lucide-react";
+import { ChevronRight, Folder, PanelLeft } from "lucide-react";
 import { useStore } from "../store";
 import { isMac } from "../platform";
 import { AnimatedSidebarTrigger, useAnimatedSidebar } from "./motion/animated-sidebar";
-
-const TRUST_LABEL: Record<string, string> = {
-  untrusted: "未信任",
-  restricted: "受限",
-  trusted: "已信任",
-};
 
 export function TopBar() {
   const s = useStore();
@@ -40,20 +34,9 @@ export function TopBar() {
             <PanelLeft aria-hidden="true" className="size-4" />
           </AnimatedSidebarTrigger>
         )}
-        <span
-          className={`inline-block h-2 w-2 shrink-0 rounded-full ${
-            s.agentState === "running"
-              ? "animate-pulse bg-accent"
-              : s.agentState === "failed"
-                ? "bg-danger"
-                : "bg-ok"
-          }`}
-        />
+        <Folder aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="truncate font-mono text-xs text-muted-foreground" title={s.cwd}>
           {s.cwd.split("/").pop() || s.cwd}
-        </span>
-        <span className="rounded bg-panel-2 px-1.5 py-0.5 text-[11px] text-muted-foreground">
-          {TRUST_LABEL[s.trust]}
         </span>
         {/* 当前会话名（自动起标题/手动改名后才有）：新会话不展示。 */}
         {s.session?.name && (
