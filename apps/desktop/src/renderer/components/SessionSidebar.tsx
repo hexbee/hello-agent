@@ -38,6 +38,7 @@ import {
 } from "./agents/ai-sidebar";
 import { store, useStore, type StoreState } from "../store";
 import { isMac } from "../platform";
+import { useTouchCapable } from "../lib/hooks/use-touch-capable";
 
 function basename(p: string): string {
   return p.split("/").filter(Boolean).pop() ?? p;
@@ -50,9 +51,9 @@ const SESSION_PAGE_SIZE = 5;
 const MENU_ACTION_CLASS =
   "flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-xs text-foreground outline-none transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40";
 
-/** 「项目」分区头右侧小圆钮的共用样式。 */
+/** 「项目」分区头右侧小圆钮的共用样式：默认隐藏，hover 行/键盘聚焦时出现。 */
 const HEADER_BUTTON_CLASS =
-  "grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring";
+  "grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground opacity-0 outline-none transition hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/header:opacity-100";
 
 /** store 的 projects → 项目树：项目为父节点（kind: project），会话为子节点（kind: file）。 */
 function toTree(s: StoreState): SidebarResource[] {
@@ -72,6 +73,8 @@ export function SessionSidebar() {
   const s = useStore();
   const activeId = s.session?.file ?? null;
   const items = toTree(s);
+  // 项目行尾的「新对话」钮与 ⋯ 钮一致：hover 设备上悬停显示，触屏常显。
+  const canTouch = useTouchCapable();
   // 「项目」分区整体折叠（Codex 侧边栏的「项目 ⌄」）。
   const [sectionOpen, setSectionOpen] = useState(true);
   // 「项目」⋯ 菜单。
@@ -154,6 +157,15 @@ export function SessionSidebar() {
     } else {
       // 其他项目：先切工作区（恢复信任 + 重建 runtime），再打开会话。
       void store.openProject(projectCwd).then(() => store.openSession(id));
+    }
+  };
+
+  /** 项目行「新对话」：一键切到该项目目录并新建会话（跨项目复用 select 的切换链）。 */
+  const newSessionInProject = (projectCwd: string) => {
+    if (projectCwd === s.cwd) {
+      void store.newSession();
+    } else {
+      void store.openProject(projectCwd).then(() => store.newSession());
     }
   };
 
@@ -263,27 +275,17 @@ export function SessionSidebar() {
           </div>
         )}
         {/* 顶部操作区：复刻 docs/ai-sidebar.md 的 action 菜单（新对话 / Pull Request / 已安排 / 插件）。
-            其余三项为空实现，仅“新对话”及右侧 + 按钮实际生效（新建会话 / 打开项目）。 */}
+            其余三项为空实现，仅“新对话”实际生效（新建会话）。 */}
         <AnimatedSidebarMenu className="gap-1 px-2 py-3">
           <AnimatedSidebarMenuItem>
-            <div className="flex items-center">
-              <AnimatedSidebarMenuButton
-                icon={<SquarePen className="size-4" />}
-                onSelect={() => void store.newSession()}
-                disabled={!s.cwd}
-                className="flex-1 font-normal text-foreground"
-              >
-                新对话
-              </AnimatedSidebarMenuButton>
-              <button
-                type="button"
-                title="打开新的项目文件夹"
-                onClick={() => void store.openWorkspace()}
-                className="relative z-10 mr-1.5 grid size-6 shrink-0 place-items-center rounded-full text-muted-foreground outline-none transition-colors hover:text-fg"
-              >
-                <Plus aria-hidden="true" className="size-4" />
-              </button>
-            </div>
+            <AnimatedSidebarMenuButton
+              icon={<SquarePen className="size-4" />}
+              onSelect={() => void store.newSession()}
+              disabled={!s.cwd}
+              className="font-normal text-foreground"
+            >
+              新对话
+            </AnimatedSidebarMenuButton>
           </AnimatedSidebarMenuItem>
           <AnimatedSidebarMenuItem>
             <AnimatedSidebarMenuButton
@@ -319,8 +321,9 @@ export function SessionSidebar() {
             文档撑出多余的右侧滚动条。 */}
         <div className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2">
           {/* 「项目」分区头：点击标题折叠/展开整区；右侧 ⋯ 菜单与 + 新建项目
-              （对应 Codex 侧边栏的 项目 ⌄ … + ）。 */}
-          <div className="mb-1 flex h-8 items-center gap-0.5 pl-2 pr-0.5">
+              （对应 Codex 侧边栏的 项目 ⌄ … + ）。group/header：⋯ 与 + 默认
+              隐藏，悬停整行（或键盘聚焦）时出现；触屏无 hover 则常显。 */}
+          <div className="group/header mb-1 flex h-8 items-center gap-0.5 pl-2 pr-0.5">
             <button
               type="button"
               aria-expanded={sectionOpen}
@@ -346,7 +349,11 @@ export function SessionSidebar() {
                   type="button"
                   aria-label="项目菜单"
                   title="项目菜单"
-                  className={HEADER_BUTTON_CLASS}
+                  className={cn(
+                    HEADER_BUTTON_CLASS,
+                    // 菜单展开时鼠标可能移入弹层（离开行），⋯ 保持可见。
+                    canTouch || projectsMenuOpen ? "opacity-100" : "opacity-0",
+                  )}
                 >
                   <MoreHorizontal aria-hidden="true" className="size-4" />
                 </button>
@@ -401,7 +408,10 @@ export function SessionSidebar() {
               aria-label="新建项目"
               title="新建项目（打开文件夹）"
               onClick={() => void store.openWorkspace()}
-              className={HEADER_BUTTON_CLASS}
+              className={cn(
+                HEADER_BUTTON_CLASS,
+                canTouch ? "opacity-100" : "opacity-0",
+              )}
             >
               <Plus aria-hidden="true" className="size-4" />
             </button>
@@ -425,6 +435,29 @@ export function SessionSidebar() {
                 renderIcon={(item) =>
                   item.kind === "project" ? undefined : (
                     <MessageSquare aria-hidden="true" className="size-4 shrink-0" />
+                  )
+                }
+                renderTrailingAction={(item) =>
+                  // 仅项目行提供「新对话」快捷钮：一键切目录 + 新建会话。
+                  // 显隐样式与行内 ⋯ 钮完全一致（hover 显示、触屏常显）。
+                  item.kind !== "project" ? undefined : (
+                    <button
+                      type="button"
+                      draggable={false}
+                      tabIndex={-1}
+                      aria-label={`在 ${item.label} 中新建对话`}
+                      title={`在 ${item.label} 中新建对话`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        newSessionInProject(item.id);
+                      }}
+                      className={cn(
+                        "grid size-7 shrink-0 place-items-center rounded-lg outline-none transition-opacity hover:bg-foreground/5 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/resource:opacity-100 group-data-[menu-open=true]/resource:opacity-100",
+                        canTouch ? "opacity-100" : "opacity-0",
+                      )}
+                    >
+                      <SquarePen aria-hidden="true" className="size-4" />
+                    </button>
                   )
                 }
                 renderMenu={renderMenu}

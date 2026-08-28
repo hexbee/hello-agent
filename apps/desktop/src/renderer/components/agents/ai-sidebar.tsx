@@ -103,6 +103,12 @@ export interface AISidebarProps {
     item: SidebarResource,
     controls: SidebarResourceMenuControls,
   ) => ReactNode;
+  /**
+   * 行尾三点 ⋯ 按钮之后的额外动作位（如项目行的「新建对话」）。返回的节点
+   * 渲染在 ⋯ 按钮右侧，行内 hover 显隐等样式由宿主自行套用（行是
+   * group/resource，可用同样的 group-hover 类）。返回 undefined 表示无动作。
+   */
+  renderTrailingAction?: (item: SidebarResource) => ReactNode;
   ariaLabel?: string;
   className?: string;
 }
@@ -414,6 +420,7 @@ interface ResourceRowProps {
   onToggle: () => void;
   renderIcon?: (item: SidebarResource) => ReactNode;
   renderMenu?: AISidebarProps["renderMenu"];
+  trailingAction?: ReactNode;
   setRef: (node: HTMLDivElement | null) => void;
 }
 
@@ -441,6 +448,7 @@ function ResourceRow({
   onToggle,
   renderIcon,
   renderMenu,
+  trailingAction,
   setRef,
 }: ResourceRowProps) {
   const reduce = useReducedMotion() ?? false;
@@ -610,37 +618,42 @@ function ResourceRow({
       )}
 
       {!renaming && !row.item.disabled ? (
-        <MorphPopover
-          open={menuOpen}
-          onOpenChange={onMenuOpenChange}
-        >
-          <MorphPopoverTrigger>
-            <button
-              type="button"
-              draggable={false}
-              tabIndex={-1}
-              aria-label={`Actions for ${row.item.label}`}
-              onClick={(event) => event.stopPropagation()}
-              className={cn(
-                "grid size-7 shrink-0 place-items-center rounded-lg outline-none transition-opacity hover:bg-foreground/5 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/resource:opacity-100 group-data-[menu-open=true]/resource:opacity-100",
-                // A finger never hovers, and this menu is the only path to
-                // rename and move without a drag — keep it on screen there.
-                canTouch ? "opacity-100" : "opacity-0",
-              )}
-            >
-              <MoreHorizontal aria-hidden="true" className="size-4" />
-            </button>
-          </MorphPopoverTrigger>
-          <MorphPopoverContent
-            side="bottom"
-            align="end"
-            sideOffset={8}
-            radius={12}
-            className="w-40 p-1.5"
+        // ⋯ 与行尾动作位同容器：间距 gap-0.5 对齐「项目」分区头的 ⋯/+ 组；
+        // 弹层内容 portal 到 body，包裹触发器不影响定位。
+        <div className="flex shrink-0 items-center gap-0.5">
+          <MorphPopover
+            open={menuOpen}
+            onOpenChange={onMenuOpenChange}
           >
-            <div data-sidebar-resource-menu={row.item.id}>{menu}</div>
-          </MorphPopoverContent>
-        </MorphPopover>
+            <MorphPopoverTrigger>
+              <button
+                type="button"
+                draggable={false}
+                tabIndex={-1}
+                aria-label={`Actions for ${row.item.label}`}
+                onClick={(event) => event.stopPropagation()}
+                className={cn(
+                  "grid size-7 shrink-0 place-items-center rounded-lg outline-none transition-opacity hover:bg-foreground/5 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/resource:opacity-100 group-data-[menu-open=true]/resource:opacity-100",
+                  // A finger never hovers, and this menu is the only path to
+                  // rename and move without a drag — keep it on screen there.
+                  canTouch ? "opacity-100" : "opacity-0",
+                )}
+              >
+                <MoreHorizontal aria-hidden="true" className="size-4" />
+              </button>
+            </MorphPopoverTrigger>
+            <MorphPopoverContent
+              side="bottom"
+              align="end"
+              sideOffset={8}
+              radius={12}
+              className="w-40 p-1.5"
+            >
+              <div data-sidebar-resource-menu={row.item.id}>{menu}</div>
+            </MorphPopoverContent>
+          </MorphPopover>
+          {trailingAction}
+        </div>
       ) : null}
     </motion.div>
   );
@@ -713,6 +726,7 @@ export function AISidebar({
   showMoreLabel = "展开更多",
   renderIcon,
   renderMenu,
+  renderTrailingAction,
   ariaLabel = "Resources",
   className,
 }: AISidebarProps) {
@@ -1237,6 +1251,7 @@ export function AISidebar({
               }}
               renderIcon={renderIcon}
               renderMenu={renderMenu}
+              trailingAction={renderTrailingAction?.(entry.row.item)}
               setRef={(node) => {
                 if (node) rowRefs.current.set(entry.row.item.id, node);
                 else rowRefs.current.delete(entry.row.item.id);
