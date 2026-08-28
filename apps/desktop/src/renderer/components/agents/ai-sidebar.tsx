@@ -116,6 +116,34 @@ function canContain(item: SidebarResource) {
   return item.kind === "folder" || item.kind === "project";
 }
 
+/**
+ * The nearest flat row sharing `row`'s depth AND parent — its true sibling for
+ * a same-level reorder. The raw adjacent flat row (`flat[index±1]`) may be the
+ * row's own child (when expanded) or a cousin (after a sibling subtree), and
+ * targeting it for up/down would reorder into the wrong place or no-op. Same
+ * depth alone is not enough: rows at equal depth under different parents are
+ * cousins, not siblings.
+ */
+function sameParentSibling(
+  flat: FlatResource[],
+  row: FlatResource,
+  dir: -1 | 1,
+): FlatResource | undefined {
+  const index = flat.findIndex(({ item }) => item.id === row.item.id);
+  if (index === -1) return undefined;
+  for (let i = index + dir; i >= 0 && i < flat.length; i += dir) {
+    const candidate = flat[i];
+    if (
+      candidate &&
+      candidate.depth === row.depth &&
+      candidate.parentId === row.parentId
+    ) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
 function flattenResources(
   items: SidebarResource[],
   expanded: Set<string>,
@@ -469,6 +497,11 @@ function ResourceRow({
           row.item.disabled
         )
           return;
+        // A click inside the row's ⋯ menu must not toggle/select the row —
+        // menu actions (rename / move / remove) bubble up here and would flip
+        // a container's expand/collapse or re-select the row mid-action.
+        if ((event.target as HTMLElement).closest?.("[data-sidebar-resource-menu]"))
+          return;
         if (acceptsChildren) onToggle();
         else onSelect();
       }}
@@ -601,16 +634,45 @@ export function AISidebar({
   );
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
+  // Refs mirror the live drag target so `drop`/`dragover` read the freshest
+  // value instead of the render's closure — otherwise a quick release lands on
+  // a stale (often null) target and the drop is silently dropped.
+  const draggingIdRef = useRef<string | null>(null);
+  const dropTargetRef = useRef<DropTarget | null>(null);
+  const setDrag = useCallback((id: string | null) => {
+    draggingIdRef.current = id;
+    setDraggingId(id);
+  }, []);
+  const setTarget = useCallback((target: DropTarget | null) => {
+    dropTargetRef.current = target;
+    setDropTarget(target);
+  }, []);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const movePendingRef = useRef(false);
+  // Tracks top-level ids we've ever seen, so a newly added project is
+  // auto-expanded on first appearance without re-expanding ones the user
+  // deliberately collapsed (those are already in the seen set).
+  const seenTopIdsRef = useRef<Set<string> | null>(null);
   const renderedItems = internalItems;
   const selectedId = activeId ?? internalActiveId;
 
   useEffect(() => {
-    if (items) setInternalItems(items);
+    if (!items) return;
+    setInternalItems(items);
+    if (!seenTopIdsRef.current) {
+      seenTopIdsRef.current = new Set(items.map((it) => it.id));
+      return;
+    }
+    const newIds = items
+      .map((it) => it.id)
+      .filter((id) => !seenTopIdsRef.current!.has(id));
+    if (newIds.length) {
+      seenTopIdsRef.current = new Set([...seenTopIdsRef.current, ...newIds]);
+      setExpandedIds((cur) => new Set([...cur, ...newIds]));
+    }
   }, [items]);
 
   const flat = useMemo(
@@ -673,8 +735,8 @@ export function AISidebar({
 
       movePendingRef.current = true;
       updateItems(next);
-      setDropTarget(null);
-      setDraggingId(null);
+      setTarget(null);
+      setDrag(null);
       const moved = findResource(before, move.itemId);
       const target = move.targetId ? findResource(before, move.targetId) : null;
       setAnnouncement(
@@ -693,7 +755,7 @@ export function AISidebar({
         movePendingRef.current = false;
       }
     },
-    [onMove, onMoveError, renderedItems, updateItems],
+    [onMove, onMoveError, renderedItems, updateItems, setTarget, setDrag],
   );
 
   const focusRow = useCallback((id: string) => {
@@ -725,23 +787,27 @@ export function AISidebar({
       if (row.item.disabled) return {};
       const index = flat.findIndex(({ item }) => item.id === row.item.id);
       const previous = flat[index - 1];
-      const next = flat[index + 1];
       const parentId = row.parentId;
+      // up/down must target the same-level sibling, not the raw adjacent row
+      // (which may be this row's own child when expanded, or a cousin), else the
+      // move would nest or silently no-op.
+      const prevSibling = sameParentSibling(flat, row, -1);
+      const nextSibling = sameParentSibling(flat, row, 1);
       const commands: SidebarResourceMoveCommands = {};
 
-      if (previous) {
+      if (prevSibling) {
         commands.up = () =>
           void performMove({
             itemId: row.item.id,
-            targetId: previous.item.id,
+            targetId: prevSibling.item.id,
             position: "before",
           });
       }
-      if (next) {
+      if (nextSibling) {
         commands.down = () =>
           void performMove({
             itemId: row.item.id,
-            targetId: next.item.id,
+            targetId: nextSibling.item.id,
             position: "after",
           });
       }
@@ -779,6 +845,8 @@ export function AISidebar({
       const index = flat.findIndex(({ item }) => item.id === row.item.id);
       const previous = flat[index - 1];
       const next = flat[index + 1];
+      const prevSibling = sameParentSibling(flat, row, -1);
+      const nextSibling = sameParentSibling(flat, row, 1);
       const moveModifier = event.altKey && event.shiftKey;
 
       if (event.key === "ArrowDown" && !moveModifier && next) {
@@ -818,14 +886,14 @@ export function AISidebar({
         return;
       }
 
-      if (moveModifier && event.key === "ArrowUp" && previous) {
+      if (moveModifier && event.key === "ArrowUp" && prevSibling) {
         event.preventDefault();
-        void performMove({ itemId: row.item.id, targetId: previous.item.id, position: "before" });
+        void performMove({ itemId: row.item.id, targetId: prevSibling.item.id, position: "before" });
         return;
       }
-      if (moveModifier && event.key === "ArrowDown" && next) {
+      if (moveModifier && event.key === "ArrowDown" && nextSibling) {
         event.preventDefault();
-        void performMove({ itemId: row.item.id, targetId: next.item.id, position: "after" });
+        void performMove({ itemId: row.item.id, targetId: nextSibling.item.id, position: "after" });
         return;
       }
       if (moveModifier && event.key === "ArrowRight" && previous && canContain(previous.item)) {
@@ -870,17 +938,19 @@ export function AISidebar({
       aria-label={ariaLabel}
       aria-multiselectable="false"
       onDragOver={(event) => {
-        if (!draggingId || event.target !== event.currentTarget) return;
+        if (!draggingIdRef.current || event.target !== event.currentTarget) return;
         event.preventDefault();
-        setDropTarget({ id: null, position: "after" });
+        setTarget({ id: null, position: "after" });
       }}
       onDrop={(event) => {
         event.preventDefault();
-        if (draggingId && dropTarget) {
+        const did = draggingIdRef.current;
+        const target = dropTargetRef.current;
+        if (did && target) {
           void performMove({
-            itemId: draggingId,
-            targetId: dropTarget.id,
-            position: dropTarget.position,
+            itemId: did,
+            targetId: target.id,
+            position: target.position,
           });
         }
       }}
@@ -925,17 +995,18 @@ export function AISidebar({
               if (!open) focusRow(row.item.id);
             }}
             onDragStart={(event, id) => {
-              setDraggingId(id);
+              setDrag(id);
               event.dataTransfer.effectAllowed = "move";
               event.dataTransfer.setData("text/plain", id);
             }}
             onDragEnd={() => {
-              setDraggingId(null);
-              setDropTarget(null);
+              setDrag(null);
+              setTarget(null);
             }}
             onDragOver={(event, targetRow) => {
-              if (!draggingId || draggingId === targetRow.item.id) return;
-              const source = findResource(renderedItems, draggingId);
+              const did = draggingIdRef.current;
+              if (!did || did === targetRow.item.id) return;
+              const source = findResource(renderedItems, did);
               if (source && containsResource(source, targetRow.item.id)) return;
               event.preventDefault();
               event.stopPropagation();
@@ -950,16 +1021,18 @@ export function AISidebar({
                   : ratio < 0.5
                     ? "before"
                     : "after";
-              setDropTarget({ id: targetRow.item.id, position });
+              setTarget({ id: targetRow.item.id, position });
             }}
             onDrop={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              if (draggingId && dropTarget) {
+              const did = draggingIdRef.current;
+              const target = dropTargetRef.current;
+              if (did && target) {
                 void performMove({
-                  itemId: draggingId,
-                  targetId: dropTarget.id,
-                  position: dropTarget.position,
+                  itemId: did,
+                  targetId: target.id,
+                  position: target.position,
                 });
               }
             }}

@@ -38,6 +38,8 @@ const INVOKE_COMMANDS = new Set<Channel>([
   "projects.list",
   "projects.sessions",
   "projects.open",
+  "projects.remove",
+  "projects.reorder",
   "auth.status",
   "auth.begin",
   "auth.submitKey",
@@ -78,6 +80,10 @@ const api = {
     sessions: (): Promise<Result<ProjectSessions[]>> => invoke("projects.sessions"),
     open: (cwd: string): Promise<Result<{ cwd: string; trust: string }>> =>
       invoke("projects.open", { cwd }),
+    remove: (cwd: string): Promise<Result<{ removed: true }>> =>
+      invoke("projects.remove", { cwd }),
+    reorder: (order: string[]): Promise<Result<{ reordered: true }>> =>
+      invoke("projects.reorder", { order }),
   },
   auth: {
     status: (): Promise<Result<AgentSnapshot["authState"]>> => invoke("auth.status"),

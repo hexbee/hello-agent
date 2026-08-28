@@ -7,7 +7,7 @@ import {
 } from "./motion/animated-sidebar";
 import { SessionSidebar } from "./SessionSidebar";
 import { TopBar } from "./TopBar";
-import { WorkspaceGate } from "./WorkspaceGate";
+import { TrustDialog } from "./TrustDialog";
 
 export function App() {
   const s = useStore();
@@ -32,35 +32,33 @@ export function App() {
         </div>
       )}
 
-      {s.phase === "gate" ? (
-        <WorkspaceGate />
-      ) : (
-        <AnimatedSidebarProvider
-          defaultSidebarWidth={240}
-          className="min-h-0 flex-1"
-        >
-          <SessionSidebar />
-          <AnimatedSidebarInset>
-            <TopBar />
-            {s.agentState === "failed" && (
-              <div className="flex items-center justify-between border-b border-danger/30 bg-danger/10 px-4 py-1.5 text-xs text-danger">
-                <span>Agent 异常停止，输入已停用</span>
-                <button
-                  className="cursor-pointer rounded border border-danger/40 px-2 py-0.5 hover:bg-danger/20"
-                  onClick={() => void store.rebuild()}
-                >
-                  重建 Runtime
-                </button>
-              </div>
-            )}
-            {/* key 跟随会话 id：切换/新建会话时整体重挂载，
-                复位 MessageScroller 的跟随状态与滚动位置，
-                避免旧会话遗留的「回到底部」按钮出现在新会话页。 */}
-            <ChatView key={s.session?.id ?? "none"} />
-          </AnimatedSidebarInset>
-        </AnimatedSidebarProvider>
-      )}
+      {/* 不再展示 gate 首页：即使没有打开项目，也直接进入 agent 对话页。 */}
+      <AnimatedSidebarProvider
+        defaultSidebarWidth={240}
+        className="min-h-0 flex-1"
+      >
+        <SessionSidebar />
+        <AnimatedSidebarInset>
+          <TopBar />
+          {s.agentState === "failed" && (
+            <div className="flex items-center justify-between border-b border-danger/30 bg-danger/10 px-4 py-1.5 text-xs text-danger">
+              <span>Agent 异常停止，输入已停用</span>
+              <button
+                className="cursor-pointer rounded border border-danger/40 px-2 py-0.5 hover:bg-danger/20"
+                onClick={() => void store.rebuild()}
+              >
+                重建 Runtime
+              </button>
+            </div>
+          )}
+          {/* key 跟随会话 id：切换/新建会话时整体重挂载，
+              复位 MessageScroller 的跟随状态与滚动位置，
+              避免旧会话遗留的「回到底部」按钮出现在新会话页。 */}
+          <ChatView key={s.session?.id ?? "none"} />
+        </AnimatedSidebarInset>
+      </AnimatedSidebarProvider>
 
+      <TrustDialog />
       <AuthDialog />
     </div>
   );

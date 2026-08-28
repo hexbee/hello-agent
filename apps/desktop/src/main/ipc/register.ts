@@ -153,6 +153,33 @@ export function registerIpc(opts: {
     });
   });
 
+  ipcMain.handle("projects.remove", async (event, input): Promise<Result<unknown>> => {
+    return wrap(async () => {
+      if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
+      const cwd = (input as { cwd?: unknown } | undefined)?.cwd;
+      if (typeof cwd !== "string") return fail("invalid_input", "cwd required");
+      // Only main-recorded projects can be forgotten (§4.1 spirit): the
+      // renderer selects among known paths, never supplies arbitrary ones.
+      if (!opts.projects.list().includes(cwd)) {
+        return fail("not_found", "unknown project");
+      }
+      opts.projects.remove(cwd);
+      return ok({ removed: true });
+    });
+  });
+
+  ipcMain.handle("projects.reorder", async (event, input): Promise<Result<unknown>> => {
+    return wrap(async () => {
+      if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
+      const order = (input as { order?: unknown } | undefined)?.order;
+      if (!Array.isArray(order) || order.some((x) => typeof x !== "string") || order.length === 0) {
+        return fail("invalid_input", "order must be a non-empty string array");
+      }
+      opts.projects.reorder(order as string[]);
+      return ok({ reordered: true });
+    });
+  });
+
   // ── auth / models ──────────────────────────────────────────────────────────
 
   ipcMain.handle("auth.status", async (event) => {

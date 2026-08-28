@@ -57,6 +57,32 @@ export class ProjectsStore {
   }
 
   /**
+   * Forget a saved project. Session files stay on disk; re-opening the folder
+   * via a dialog re-records it (`add`), so it can be re-added any time.
+   */
+  remove(cwd: string): void {
+    this.cwds = this.cwds.filter((p) => p !== cwd);
+    this.save();
+  }
+
+  /**
+   * Persist a new order for the saved projects. `order` must be a permutation
+   * of the current list (same set, same length) — the renderer only reorders
+   * main-known paths, never supplies arbitrary ones (§4.1).
+   */
+  reorder(order: string[]): void {
+    if (order.length !== this.cwds.length) throw new Error("invalid project order");
+    const current = new Set(this.cwds);
+    const seen = new Set<string>();
+    for (const cwd of order) {
+      if (!current.has(cwd) || seen.has(cwd)) throw new Error("invalid project order");
+      seen.add(cwd);
+    }
+    this.cwds = [...order];
+    this.save();
+  }
+
+  /**
    * Read-only scan of every saved project's session metadata. No runtime is
    * required — SessionManager.list filters app-owned session files by the
    * cwd recorded in each session header.

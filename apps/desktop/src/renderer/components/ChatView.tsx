@@ -308,8 +308,14 @@ export function ChatView() {
         >
           {s.entries.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
-              <div className="text-base">开始新的对话</div>
-              <div className="text-xs">输入消息，agent 将在工作区内协助你。</div>
+              <div className="text-base">
+                {s.cwd ? "开始新的对话" : "还没有打开项目"}
+              </div>
+              <div className="text-xs">
+                {s.cwd
+                  ? "输入消息，agent 将在工作区内协助你。"
+                  : "点击左侧「项目」选择一个目录开始。"}
+              </div>
             </div>
           ) : (
             s.entries.map((e) =>
