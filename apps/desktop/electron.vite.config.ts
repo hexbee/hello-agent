@@ -27,7 +27,10 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [
+      // @sentry/electron 必须打进 bundle：沙箱化 preload 不能 require 外部 node_modules
+      externalizeDepsPlugin({ exclude: ["@sentry/electron"] }),
+    ],
     build: {
       lib: {
         entry: resolve(__dirname, "src/preload/index.ts"),

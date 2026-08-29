@@ -1,6 +1,13 @@
 // Restricted preload — §3: contextBridge exposes ONLY concrete command wrappers
 // and event subscription. No ipcRenderer, no event objects, no generic invoke/send.
 
+// 捕获 preload 上下文的错误（contextIsolation: true 时主进程无法自动覆盖 preload）。
+// 沙箱化 preload 不能 require 外部 node_modules，@sentry/electron 由 electron-vite
+// 打进 bundle（见 electron.vite.config.ts preload.externalizeDepsPlugin exclude）。
+import * as Sentry from "@sentry/electron/renderer";
+
+Sentry.init(); // 配置（dsn/采样等）由主进程经 IPC 下发，renderer 侧无需重复传参
+
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   AgentRebuildResult,

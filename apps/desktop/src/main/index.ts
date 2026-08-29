@@ -1,6 +1,8 @@
 // Electron Main entry — security defaults §3, workspace state machine §4.1,
 // failure/recovery §4.5.
 
+// Sentry 必须最先初始化（as early as possible），后续模块抛错才能被捕获。
+import "./sentry.js";
 import { app, BrowserWindow, shell } from "electron";
 import { join } from "node:path";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
