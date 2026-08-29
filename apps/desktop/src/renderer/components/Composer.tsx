@@ -24,7 +24,7 @@ const MODES: PromptMode[] = [
   },
 ];
 
-export function Composer() {
+export function Composer({ autoFocus = false }: { autoFocus?: boolean }) {
   const s = useStore();
 
   const models: PromptModel[] = s.models.map((m) => ({
@@ -42,9 +42,14 @@ export function Composer() {
     <div className="py-3">
       <PromptInput
         placeholder={
-          running ? "Agent 正在运行…" : "输入消息（Enter 发送，Shift+Enter 换行）"
+          running
+            ? "Agent 正在运行…"
+            : s.entries.length === 0
+              ? "你想做什么？"
+              : "输入消息（Enter 发送，Shift+Enter 换行）"
         }
         aria-label="Prompt"
+        autoFocus={autoFocus}
         disabled={s.trust === "untrusted"}
         loading={running}
         onStop={() => void store.abort()}

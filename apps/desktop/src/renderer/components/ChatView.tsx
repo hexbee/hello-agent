@@ -12,6 +12,7 @@ import type { ChatEntry, MessageItem, ToolItem } from "../store";
 import { store, useStore } from "../store";
 import { ApprovalStack } from "./ApprovalStack";
 import { Composer } from "./Composer";
+import { EmptyChat } from "./EmptyChat";
 
 // Appendix A: each message is independently memoized; history replay disables
 // smooth streaming. Streaming vs history props follow the markstream skill:
@@ -288,8 +289,22 @@ export function ChatView() {
   const [following, setFollowing] = useState(true);
   const viewportEl = useRef<HTMLElement | null>(null);
 
+  if (s.entries.length === 0) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center px-6 py-10 pb-16">
+          <EmptyChat />
+          <div className="mt-6 w-full">
+            <ApprovalStack />
+            <Composer autoFocus />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative min-h-0 flex-1">
         <MessageScroller
           className="h-full"
@@ -300,31 +315,14 @@ export function ChatView() {
             viewportEl.current = el;
           }}
           viewportClassName="px-6 py-4"
-          contentClassName={
-            s.entries.length === 0
-              ? "mx-auto w-full max-w-3xl"
-              : "mx-auto flex w-full max-w-3xl flex-col gap-4"
-          }
+          contentClassName="mx-auto flex w-full max-w-3xl flex-col gap-4"
         >
-          {s.entries.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
-              <div className="text-base">
-                {s.cwd ? "开始新的对话" : "还没有打开项目"}
-              </div>
-              <div className="text-xs">
-                {s.cwd
-                  ? "输入消息，agent 将在工作区内协助你。"
-                  : "点击左侧「项目」选择一个目录开始。"}
-              </div>
-            </div>
-          ) : (
-            s.entries.map((e) =>
-              e.kind === "message" ? (
-                <MessageView key={e.messageId} m={e} isDark={isDark} />
-              ) : (
-                <ToolCard key={e.toolCallId} t={e} />
-              ),
-            )
+          {s.entries.map((e) =>
+            e.kind === "message" ? (
+              <MessageView key={e.messageId} m={e} isDark={isDark} />
+            ) : (
+              <ToolCard key={e.toolCallId} t={e} />
+            ),
           )}
         </MessageScroller>
         {!following && (
@@ -350,7 +348,7 @@ export function ChatView() {
         <ApprovalStack />
         <Composer />
       </div>
-    </>
+    </div>
   );
 }
 
