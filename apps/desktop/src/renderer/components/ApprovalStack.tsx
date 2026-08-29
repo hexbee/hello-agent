@@ -78,11 +78,11 @@ function ApprovalCardItem({ p }: { p: PendingApproval }) {
   return (
     <ToolApproval
       tool={p.toolName}
-      title="允许执行该工具？"
+      title="允许执行该操作？"
       description={
         <span className={remaining <= 10 ? "font-medium text-danger" : undefined}>
           {remaining > 0
-            ? `${remaining}s 内未决策将自动拒绝该次调用。`
+            ? `${remaining}s 内未选择将自动拒绝。`
             : "即将过期…"}
         </span>
       }
@@ -90,7 +90,7 @@ function ApprovalCardItem({ p }: { p: PendingApproval }) {
       defaultOpen
       status={status}
       approveLabel="允许（仅本次）"
-      alwaysAllowLabel="本会话始终允许"
+      alwaysAllowLabel="本次对话始终允许"
       denyLabel="拒绝"
       onApprove={() => resolve("allow-once")}
       onAlwaysAllow={() => resolve("allow")}

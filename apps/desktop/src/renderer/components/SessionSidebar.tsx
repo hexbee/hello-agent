@@ -265,7 +265,7 @@ export function SessionSidebar() {
               controls.close();
               if (
                 confirm(
-                  `移除项目「${item.label}」？\n仅从侧边栏列表移除，会话文件会保留，之后可通过「项目」重新添加。`,
+                  `移除项目「${item.label}」？\n仅从侧边栏移除，聊天记录会保留，之后可通过「项目」重新添加。`,
                 )
               ) {
                 void store.removeProject(item.id);
@@ -286,7 +286,7 @@ export function SessionSidebar() {
           type="button"
           onClick={() => controls.rename()}
           disabled={item.id !== activeId}
-          title={item.id !== activeId ? "只能重命名当前会话" : undefined}
+          title={item.id !== activeId ? "只能重命名当前对话" : undefined}
           className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-xs text-foreground outline-none transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
         >
           重命名
@@ -298,7 +298,7 @@ export function SessionSidebar() {
           title={!isCurrentProject ? "先切换到该项目再删除" : undefined}
           onClick={() => {
             controls.close();
-            if (isCurrentProject && confirm("删除该会话？（移到系统废纸篓）")) {
+            if (isCurrentProject && confirm("删除该对话？（会移到系统废纸篓）")) {
               void store.deleteSession(item.id);
             }
           }}
@@ -559,7 +559,7 @@ function ForkSection() {
         className="flex w-full cursor-pointer items-center justify-between text-xs text-muted-foreground hover:text-fg"
         onClick={() => setForkOpen(!forkOpen)}
       >
-        从历史分叉 <span>{forkOpen ? "▾" : "▸"}</span>
+        从历史新建对话 <span>{forkOpen ? "▾" : "▸"}</span>
       </button>
       {forkOpen && (
         <div className="mt-1 max-h-40 overflow-y-auto">

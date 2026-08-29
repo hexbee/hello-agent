@@ -11,25 +11,25 @@ const SUGGESTIONS = [
   {
     id: "intro",
     label: "介绍这个项目",
-    prompt: "介绍这个项目：它是做什么的，目录怎么组织，我该从哪看起。",
+    prompt: "介绍这个项目：它是做什么的，文件怎么组织，我该从哪看起。",
     icon: BookOpen,
   },
   {
     id: "tree",
-    label: "查看目录结构",
-    prompt: "列出当前工作区的目录结构，标出关键文件和它们的作用。",
+    label: "看看文件结构",
+    prompt: "列出当前项目的文件结构，标出关键文件和它们的作用。",
     icon: FolderTree,
   },
   {
     id: "git",
     label: "最近改了什么",
-    prompt: "用 git 看最近的提交和未提交改动，总结现在做到哪了。",
+    prompt: "查看最近的修改记录（含未保存的改动），总结现在做到哪了。",
     icon: GitBranch,
   },
   {
     id: "improve",
     label: "找一个改进点",
-    prompt: "浏览代码，指出一个值得先看的问题或改进点。",
+    prompt: "看看项目代码，指出一个值得先看的问题或改进点。",
     icon: Search,
   },
 ] as const;
@@ -72,8 +72,8 @@ export function EmptyChat() {
         </h1>
         <p className="mx-auto mt-2 max-w-[34ch] text-sm leading-relaxed text-muted-foreground">
           {project
-            ? "描述你想做的事，agent 会在这个工作区内协助你。"
-            : "从左侧选择一个目录，就可以开始对话。"}
+            ? "想做什么？直接告诉我吧。"
+            : "从左侧选一个文件夹，就可以开始对话。"}
         </p>
       </motion.div>
 

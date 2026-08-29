@@ -13,13 +13,13 @@ const MODES: PromptMode[] = [
   {
     value: "default",
     label: "默认权限",
-    description: "只读自动放行，写文件 / 命令需审批",
+    description: "只读自动通过，修改文件 / 执行命令前先询问",
     icon: <Shield />,
   },
   {
     value: "full",
     label: "完全访问",
-    description: "所有工具自动放行，不再弹审批",
+    description: "所有操作自动执行，不再询问",
     icon: <ShieldCheck />,
   },
 ];
@@ -43,7 +43,7 @@ export function Composer({ autoFocus = false }: { autoFocus?: boolean }) {
       <PromptInput
         placeholder={
           running
-            ? "Agent 正在运行…"
+            ? "正在处理…"
             : s.entries.length === 0
               ? "你想做什么？"
               : "输入消息（Enter 发送，Shift+Enter 换行）"

@@ -112,7 +112,7 @@ function ThinkingActivity({ m }: { m: MessageItem }) {
             思考了 <span className="tabular-nums">{Math.round(duration)}s</span>
           </>
         ) : (
-          "推理过程"
+          "思考过程"
         )
       }
       items={thinkingItems(m.thinking ?? "")}
