@@ -87,7 +87,13 @@ export class PiAdapter {
     await this.disposeInternal({ abortFirst: false });
 
     if (!this.modelRuntime) {
-      this.modelRuntime = await createIsolatedModelRuntime(this.host.paths);
+      // §8: app-owned CredentialStore (safeStorage) backs the runtime so
+      // UI-submitted keys persist across restarts; probes omit credentials
+      // and fall back to InMemory + env keys.
+      this.modelRuntime = await createIsolatedModelRuntime(
+        this.host.paths,
+        this.host.credentials,
+      );
       // Spike auth policy: env-injected keys via runtime overrides (never persisted).
       const key = this.host.getEnvKey("anthropic");
       if (key) await this.modelRuntime.setRuntimeApiKey("anthropic", key);
@@ -410,6 +416,11 @@ export class PiAdapter {
       supportsApiKey: p.auth?.apiKey != null,
       supportsOAuth: p.auth?.oauth != null,
       configured: rt.hasConfiguredAuth(p.id),
+      hint:
+        this.host.credentialMeta?.(p.id)?.maskedHint ??
+        maskKey(this.host.getEnvKey(p.id)),
+      // 仅应用安全存储里有的 key 可被移除；环境变量注入的 key 不展示移除入口。
+      removable: this.host.credentialMeta?.(p.id) != null,
     }));
   }
 
@@ -429,6 +440,29 @@ export class PiAdapter {
       const msg = e instanceof Error ? e.message : String(e);
       throw new Error(`auth_required: ${msg}`);
     }
+    // §8: verify passed → persist encrypted at rest (safeStorage), so the
+    // configured state survives restarts. All-or-nothing: if the store write
+    // fails, roll the runtime override back rather than keep a phantom key.
+    try {
+      await this.host.credentials?.modify(providerId, async () => ({
+        type: "api_key" as const,
+        key: apiKey,
+      }));
+    } catch (e) {
+      await rt.removeRuntimeApiKey(providerId).catch(() => undefined);
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`storage: ${msg}`);
+    }
+  }
+
+  /** §8.4 — drop the credential: persisted store entry first, then the
+   *  runtime override (its availability refresh re-reads the store, so
+   *  the provider flips back to unconfigured). */
+  async removeApiKey(providerId: string): Promise<void> {
+    const rt = this.requireModelRuntime();
+    if (!rt.getProvider(providerId)) throw new Error(`not_found: unknown provider ${providerId}`);
+    await this.host.credentials?.delete(providerId).catch(() => undefined);
+    await rt.removeRuntimeApiKey(providerId);
   }
 
   private requireModelRuntime(): ModelRuntime {

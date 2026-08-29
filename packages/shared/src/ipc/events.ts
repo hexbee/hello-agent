@@ -116,6 +116,10 @@ export type AgentSnapshot = {
     supportsApiKey: boolean;
     supportsOAuth: boolean;
     configured: boolean;
+    /** Masked credential hint ("sk-…abcd") or null. Never key material. */
+    hint: string | null;
+    /** True when the app holds the key (can be removed); env-provided keys are not removable. */
+    removable: boolean;
   }>;
   models: Array<{ provider: string; id: string; context: number | null }>;
   selectedModel: string | null;

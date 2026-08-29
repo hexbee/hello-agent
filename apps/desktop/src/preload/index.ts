@@ -14,6 +14,7 @@ import type {
   AgentSnapshot,
   ApprovalResolveRequest,
   AuthBeginRequest,
+  AuthRemoveKeyRequest,
   AuthSubmitKeyRequest,
   ModelsSelectRequest,
   Result,
@@ -101,6 +102,8 @@ const api = {
       invoke("auth.begin", { provider } satisfies AuthBeginRequest),
     submitKey: (provider: string, apiKey: string): Promise<Result<AgentSnapshot["authState"]>> =>
       invoke("auth.submitKey", { provider, apiKey } satisfies AuthSubmitKeyRequest),
+    removeKey: (provider: string): Promise<Result<{ removed: true }>> =>
+      invoke("auth.removeKey", { provider } satisfies AuthRemoveKeyRequest),
     cancel: (): Promise<Result<{ cancelled: true }>> => invoke("auth.cancel"),
   },
   models: {

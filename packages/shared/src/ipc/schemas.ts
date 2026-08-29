@@ -67,6 +67,13 @@ export const validateAuthSubmitKey = objectValidator<AuthSubmitKeyInput>({
   apiKey: (v) => str(v) && v.length >= 8 && v.length <= 4096,
 });
 
+export interface AuthRemoveKeyInput {
+  provider: string;
+}
+export const validateAuthRemoveKey = objectValidator<AuthRemoveKeyInput>({
+  provider: (v) => str(v) && /^[a-z0-9-]{1,64}$/.test(v),
+});
+
 export interface ModelsSelectInput {
   ref: string;
 }

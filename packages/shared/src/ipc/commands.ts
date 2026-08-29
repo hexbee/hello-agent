@@ -54,6 +54,11 @@ export interface AuthSubmitKeyRequest {
 }
 export type AuthSubmitKeyResult = AuthStatusResult;
 
+export interface AuthRemoveKeyRequest {
+  provider: string;
+}
+export type AuthRemoveKeyResult = { removed: true };
+
 export type AuthCancelResult = { cancelled: true };
 
 export type ModelsListResult = AgentSnapshot["models"];

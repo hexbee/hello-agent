@@ -820,7 +820,7 @@ class Store {
           entries: this.state.entries.filter(
             (x) => !(x.kind === "message" && x.messageId === messageId),
           ),
-          banner: { kind: "error", text: "Agent 正在运行，消息未发送" },
+          banner: { kind: "error", text: "助手正在处理，消息未发送" },
         });
         if (added) this.removeOptimisticSession(added.sessionId);
       }
@@ -852,7 +852,7 @@ class Store {
       this.lastSequence = 0;
       await this.refreshSnapshot();
       await this.refreshSessions();
-      this.set({ banner: { kind: "info", text: "Runtime 已重建" } });
+      this.set({ banner: { kind: "info", text: "助手已重新启动" } });
     } catch (e) {
       this.set({ banner: { kind: "error", text: `重建失败：${String(e)}` }, agentState: "failed" });
     }
@@ -914,7 +914,7 @@ class Store {
     try {
       const r = unwrap(await api().session.fork(entryId));
       await this.afterSessionSwitch(r.sessionId);
-      this.set({ banner: { kind: "info", text: "已从所选消息分叉新会话" } });
+      this.set({ banner: { kind: "info", text: "已基于所选消息新建对话" } });
     } catch (e) {
       this.set({ banner: { kind: "error", text: String(e) } });
     }
@@ -963,14 +963,34 @@ class Store {
   }
 
   /** §8 — submit API key; Main verifies then persists via secure storage.
-   *  设置页保持打开，凭据状态面板与 banner 反映结果。 */
-  async submitApiKey(provider: string, apiKey: string): Promise<void> {
+   *  返回错误信息串（无错误时为 null），供设置页内联展示；banner 同步反映。 */
+  async submitApiKey(provider: string, apiKey: string): Promise<string | null> {
     try {
       const st = unwrap(await api().auth.submitKey(provider, apiKey));
       await this.refreshSnapshot();
-      this.set({ authState: st, banner: { kind: "info", text: `${provider} 凭据已保存到系统安全存储` } });
+      this.set({
+        authState: st,
+        banner: { kind: "info", text: `${provider} 凭据已保存` },
+      });
+      return null;
     } catch (e) {
-      this.set({ banner: { kind: "error", text: String(e) } });
+      const msg = String(e);
+      this.set({ banner: { kind: "error", text: msg } });
+      return msg;
+    }
+  }
+
+  /** §8.4 — remove a provider credential (runtime + persisted store). */
+  async removeApiKey(provider: string): Promise<string | null> {
+    try {
+      unwrap(await api().auth.removeKey(provider));
+      await this.refreshSnapshot();
+      this.set({ banner: { kind: "info", text: `${provider} 凭据已移除` } });
+      return null;
+    } catch (e) {
+      const msg = String(e);
+      this.set({ banner: { kind: "error", text: msg } });
+      return msg;
     }
   }
 }

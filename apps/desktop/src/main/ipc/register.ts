@@ -6,6 +6,7 @@ import {
   validateApprovalResolve,
   validatePermissionModeSet,
   validateAuthSubmitKey,
+  validateAuthRemoveKey,
   validateModelsSelect,
   validateSessionDelete,
   validateSessionFork,
@@ -213,6 +214,18 @@ export function registerIpc(opts: {
       // key is never echoed back or logged.
       await a.submitApiKey(v.data.provider, v.data.apiKey);
       return ok(await a.authState());
+    });
+  });
+
+  ipcMain.handle("auth.removeKey", async (event, input) => {
+    return wrap(async () => {
+      if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
+      const v = validateAuthRemoveKey(input);
+      if (!v.ok) return v;
+      requireTrusted("restricted");
+      const a = adapter();
+      await a.removeApiKey(v.data.provider);
+      return ok({ removed: true });
     });
   });
 
