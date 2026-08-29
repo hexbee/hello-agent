@@ -26,8 +26,8 @@
     "vite": "7.3.6"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.84.2",
-    "@earendil-works/pi-coding-agent": "0.84.2",
+    "@earendil-works/pi-ai": "0.84.4",
+    "@earendil-works/pi-coding-agent": "0.84.4",
     "@sentry/electron": "^7.17.0",
     "clsx": "2.1.1",
     "lucide-react": "1.33.0",
