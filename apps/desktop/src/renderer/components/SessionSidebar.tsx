@@ -382,8 +382,8 @@ export function SessionSidebar() {
             <span aria-hidden="true" className="h-full min-w-0 flex-1" />
           </div>
         )}
-        {/* 顶部操作区：复刻 docs/ai-sidebar.md 的 action 菜单（新对话 / Pull Request / 已安排 / 插件）。
-            其余三项为空实现，仅“新对话”实际生效（新建会话）。 */}
+        {/* 顶部操作区：仅“新对话”已经接通；其余入口保留产品方向，明确标记
+            “即将推出”并禁用，避免形成点击后无反馈的死按钮。 */}
         <AnimatedSidebarMenu className="gap-1 px-2 py-3">
           <AnimatedSidebarMenuItem>
             <AnimatedSidebarMenuButton
@@ -398,7 +398,8 @@ export function SessionSidebar() {
           <AnimatedSidebarMenuItem>
             <AnimatedSidebarMenuButton
               icon={<GitPullRequest className="size-4" />}
-              onSelect={() => {}}
+              badge="即将推出"
+              disabled
               className="font-normal text-foreground"
             >
               Pull Request
@@ -407,7 +408,8 @@ export function SessionSidebar() {
           <AnimatedSidebarMenuItem>
             <AnimatedSidebarMenuButton
               icon={<Clock3 className="size-4" />}
-              onSelect={() => {}}
+              badge="即将推出"
+              disabled
               className="font-normal text-foreground"
             >
               已安排
@@ -416,7 +418,8 @@ export function SessionSidebar() {
           <AnimatedSidebarMenuItem>
             <AnimatedSidebarMenuButton
               icon={<Plug className="size-4" />}
-              onSelect={() => {}}
+              badge="即将推出"
+              disabled
               className="font-normal text-foreground"
             >
               插件
