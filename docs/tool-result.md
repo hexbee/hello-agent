@@ -9,10 +9,6 @@ markdown: "https://beui.dev/components/agents/tool-result.md"
 license: "MIT"
 ---
 
-# Tool Result
-
-> A lightweight execution disclosure for syntax-highlighted terminal output and request responses that collapses into a compact completed state.
-
 ## Install
 
 ```bash
@@ -172,6 +168,7 @@ export function ToolResultRequestPreview() {
 
 | Prop | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `children` | `string` | — | Yes | Output text rendered with syntax highlighting. |
 | `language` | `"text" \| "bash" \| "diff" \| "json" \| "tsx" \| "typescript"` | `bash` | No | — |
 | `className` | `string` | — | No | — |
 
@@ -181,6 +178,7 @@ export function ToolResultRequestPreview() {
 | --- | --- | --- | --- | --- |
 | `tool` | `ReactNode` | — | Yes | — |
 | `title` | `ReactNode` | — | Yes | — |
+| `children` | `ReactNode` | — | Yes | Expandable result content. |
 | `status` | `"error" \| "success" \| "running" \| "cancelled"` | `running` | No | — |
 | `kind` | `"custom" \| "terminal" \| "request"` | `custom` | No | — |
 | `meta` | `ReactNode` | — | No | — |

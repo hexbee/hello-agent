@@ -1,8 +1,12 @@
-# Spike 结论与宿主模型 ADR 草稿
+---
+title: "Spike 结论与宿主模型 ADR"
+description: "Hello Agent 关键架构假设的自动化验收结果、宿主模型决策与构建记录。"
+sidebarTitle: "Spike 结论与 ADR"
+---
 
 > 状态：Spike 主体完成（§10.1–10.8 全部自动化验证通过）；§10.9 完整打包/签名与真实 LLM 端到端待补。
 > 日期：2026-08-24
-> 对应文档：docs/desktop-agent-tech-stack.md v0.5
+> 对应文档：[桌面 Agent 技术选型与实施边界](desktop-agent-tech-stack) v0.5
 
 ## 1. 验收结果总览（对照 §10）
 

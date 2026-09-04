@@ -9,10 +9,6 @@ markdown: "https://beui.dev/components/agents/tool-approval.md"
 license: "MIT"
 ---
 
-# Tool Approval
-
-> A human-in-the-loop permission card for reviewing tool details, allowing once, remembering access, or denying execution.
-
 ## Install
 
 ```bash
@@ -138,6 +134,9 @@ export function ToolApprovalPreview() {
 | `onApprove` | `(() => void)` | — | No | — |
 | `onAlwaysAllow` | `(() => void)` | — | No | — |
 | `onDeny` | `(() => void)` | — | No | — |
+| `approveLabel` | `ReactNode` | `Allow once` | No | Label for the one-time approval action. |
+| `alwaysAllowLabel` | `ReactNode` | `Always allow` | No | Label for the persistent approval action. |
+| `denyLabel` | `ReactNode` | `Deny` | No | Label for the denial action. |
 | `className` | `string` | — | No | — |
 
 ## Source

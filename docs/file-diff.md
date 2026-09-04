@@ -9,10 +9,6 @@ markdown: "https://beui.dev/components/agents/file-diff.md"
 license: "MIT"
 ---
 
-# File Diff
-
-> A syntax-highlighted file change disclosure with progressive rows, line numbers, live change counts, smooth following, and completion collapse.
-
 ## Install
 
 ```bash

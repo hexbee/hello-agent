@@ -9,10 +9,6 @@ markdown: "https://beui.dev/components/agents/code-block.md"
 license: "MIT"
 ---
 
-# Code Block
-
-> A syntax-highlighted code surface with stable streaming updates, line numbers, focused lines, smooth following, and copy feedback.
-
 ## Install
 
 ```bash
@@ -111,6 +107,7 @@ export function CodeBlockPreview() {
 | `language` | `"text" \| "bash" \| "diff" \| "json" \| "tsx" \| "typescript"` | `typescript` | No | — |
 | `filename` | `ReactNode` | — | No | — |
 | `status` | `"streaming" \| "complete"` | `complete` | No | — |
+| `defaultOpen` | `boolean` | `true` | No | Initial disclosure state for uncontrolled usage. |
 | `showLineNumbers` | `boolean` | `true` | No | — |
 | `highlightLines` | `number[]` | `[]` | No | — |
 | `maxHeight` | `number` | `280` | No | — |

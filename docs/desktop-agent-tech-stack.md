@@ -1,6 +1,10 @@
-# 桌面 Agent 技术选型与实施边界
+---
+title: "桌面 Agent 技术选型与实施边界"
+description: "Hello Agent v0.1 的总体架构、进程模型、安全边界、运行时契约与实施规格。"
+sidebarTitle: "技术架构与实施边界"
+---
 
-> 状态：v0.6（**架构冻结，进入实施**。Spike 验收结果与宿主模型 ADR 见 docs/spike-report.md）
+> 状态：v0.6（**架构冻结，进入实施**。Spike 验收结果与宿主模型 ADR 见 [Spike 结论与宿主模型 ADR](spike-report)）
 >
 > 日期：2026-08-24（v0.6：Spike 通过，冻结宿主模型与构建工具链，锁定依赖版本）
 >
@@ -389,7 +393,7 @@ type PendingApproval = {
 - 自动更新不属于 v0.1；进入公开发布前必须确定更新通道、回滚和签名验证。
 - 版本升级与兼容性测试、崩溃报告、诊断日志和遥测的脱敏/用户同意策略。
 
-## 10. 冻结前 Spike 验收（已完成，结果见 docs/spike-report.md）
+## 10. 冻结前 Spike 验收（已完成，结果见 [Spike 结论与宿主模型 ADR](spike-report)）
 
 > 全部探针可一键复现：`pnpm probe:all`。真实 LLM 端到端需设 `DEEPSEEK_API_KEY`（无 key 自动 SKIP）。
 

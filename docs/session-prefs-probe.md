@@ -1,4 +1,8 @@
-# Session prefs probe (session-prefs-probe)
+---
+title: "Session 偏好探针"
+description: "验证权限模式与模型选择在新会话、会话切换、项目切换和进程重建之间的继承规则。"
+sidebarTitle: "Session 偏好探针"
+---
 
 Verifies the permission-mode / model inheritance contract:
 

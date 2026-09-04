@@ -9,10 +9,6 @@ markdown: "https://beui.dev/components/agents/ai-sidebar.md"
 license: "MIT"
 ---
 
-# AI Sidebar
-
-> A collapsible AI workspace sidebar for folders, projects, files, and bookmarks with keyboard navigation, optimistic moves, inline rename, and overflow-aware labels.
-
 ## Install
 
 ```bash
@@ -269,6 +265,17 @@ export function AISidebarPreview() {
 }
 ```
 
+### SidebarResource
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Yes | Stable resource identifier. |
+| `label` | `string` | Yes | Visible resource label. |
+| `kind` | `"folder" \| "project" \| "file" \| "bookmark"` | Yes | Resource type and containment behavior. |
+| `children` | `SidebarResource[]` | No | Nested resources for folders and projects. |
+| `disabled` | `boolean` | No | Disables selection and interaction for the row. |
+| `busy` | `boolean` | No | Marks a row as active so the host can render a progress indicator. |
+
 ### AISidebar
 
 | Prop | Type | Default | Required | Description |
@@ -283,8 +290,13 @@ export function AISidebarPreview() {
 | `defaultActiveId` | `string \| null` | `null` | No | — |
 | `onActiveChange` | `((id: string) => void)` | — | No | — |
 | `defaultExpandedIds` | `string[]` | `[]` | No | — |
+| `expandedIds` | `Set<string>` | — | No | Controlled set of expanded container IDs. |
+| `onExpandedChange` | `((ids: Set<string>) => void)` | — | No | Called with the complete expanded set after a toggle. |
+| `visibleChildren` | `number \| ((item: SidebarResource) => number \| undefined)` | — | No | Limits initially visible children globally or per container; unset or non-positive values disable the limit. |
+| `showMoreLabel` | `string` | `展开更多` | No | Label for the row that reveals another batch of children. |
 | `renderIcon` | `((item: SidebarResource) => ReactNode)` | — | No | — |
 | `renderMenu` | `((item: SidebarResource, controls: SidebarResourceMenuControls) => ReactNode)` | — | No | — |
+| `renderTrailingAction` | `((item: SidebarResource) => ReactNode)` | — | No | Renders an additional row action after the overflow menu. |
 | `ariaLabel` | `string` | `Resources` | No | — |
 | `className` | `string` | — | No | — |
 

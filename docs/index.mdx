@@ -1,0 +1,31 @@
+---
+title: Hello Agent
+description: 本地 Coding Agent 桌面客户端的架构、验证与 UI 组件文档。
+---
+
+Hello Agent 是一个基于 pi SDK 与 Electron 构建的本地 Coding Agent 桌面客户端。
+
+这套文档记录了项目从架构选型、权限与安全边界，到 Spike 验证和 Agent UI 组件落地的完整过程。
+
+## 从这里开始
+
+- [桌面 Agent 技术选型与实施边界](desktop-agent-tech-stack)：了解 v0.1 MVP 的总体架构、进程模型、安全边界和产品事件契约。
+- [Spike 结论与宿主模型 ADR](spike-report)：查看关键技术决策的实验依据、验收结果和遗留事项。
+- [Session 偏好探针](session-prefs-probe)：验证权限模式与模型选择在会话、项目和进程重建之间的继承规则。
+
+## Agent UI 组件
+
+- [Agent Activity](agent-activity)：统一呈现推理、搜索、工具调用和执行轨迹。
+- [AI Sidebar](ai-sidebar)：管理文件夹、项目、文件和书签的 AI 工作区侧边栏。
+- [Message](message)：构建消息行、内容区、气泡、头像和消息状态。
+- [Message Scroller](message-scroller)：管理流式对话的跟随、阅读位置和消息导航。
+- [Prompt Input](prompt-input)：提供输入、模型选择、权限模式和发送/停止状态。
+- [Code Block](code-block)：支持流式更新、行号、聚焦行和复制反馈的代码块。
+- [File Diff](file-diff)：展示渐进式文件变更、行号和实时变更统计。
+- [Approval Card](approval-card)：组织审批、单选、多选和多步骤人工确认流程。
+- [Tool Approval](tool-approval)：用于人工确认工具执行权限的审批卡片。
+- [Tool Result](tool-result)：展示终端输出和请求响应的执行结果。
+
+## 当前状态
+
+v0.1 MVP 的核心架构、Renderer、安全隔离、会话管理和无签名打包流程已经完成验证。签名与 notarization、OAuth 流程和审计查看界面仍在后续计划中。

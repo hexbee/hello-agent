@@ -1,0 +1,48 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Hello Agent",
+  "description": "Hello Agent 桌面 Coding Agent 的架构、验证与 UI 组件文档。",
+  "colors": {
+    "primary": "#0D9373"
+  },
+  "filterSidebar": true,
+  "navigation": {
+    "groups": [
+      {
+        "group": "开始",
+        "pages": [
+          "index"
+        ]
+      },
+      {
+        "group": "架构与决策",
+        "pages": [
+          "desktop-agent-tech-stack",
+          "spike-report"
+        ]
+      },
+      {
+        "group": "验证与探针",
+        "pages": [
+          "session-prefs-probe"
+        ]
+      },
+      {
+        "group": "Agent UI 组件",
+        "pages": [
+          "agent-activity",
+          "ai-sidebar",
+          "message",
+          "message-scroller",
+          "prompt-input",
+          "code-block",
+          "file-diff",
+          "approval-card",
+          "tool-approval",
+          "tool-result"
+        ]
+      }
+    ]
+  }
+}

@@ -9,10 +9,6 @@ markdown: "https://beui.dev/components/agents/agent-activity.md"
 license: "MIT"
 ---
 
-# Agent Activity
-
-> One adaptive activity stream for reasoning, searches, tool calls, structured execution traces, or a chronological mix.
-
 ## Install
 
 ```bash
