@@ -8,7 +8,7 @@ import {
   FolderMinus,
   FolderPlus,
   GitPullRequest,
-  Loader,
+  LoaderCircle,
   MessageSquare,
   MoreHorizontal,
   Pencil,
@@ -77,18 +77,27 @@ function toTree(s: StoreState): SidebarResource[] {
           id: `pending:${o.sessionId}`,
           label: o.name,
           kind: "file" as const,
-          busy: o.running,
+          busy:
+            o.running ||
+            (s.agentState === "running" && o.sessionId === s.session?.id),
         })),
         ...p.sessions.map((sess) => {
           const opt = s.optimisticSessions.find((o) =>
             fileMatchesSession(sess.file, o.sessionId),
           );
+          const isActiveSession =
+            s.session?.file === sess.file ||
+            (!!s.session?.id && fileMatchesSession(sess.file, s.session.id));
           return {
             id: sess.file,
             label:
               sess.name || opt?.name || basename(sess.file).replace(/\.jsonl$/, ""),
             kind: "file" as const,
-            busy: opt?.running,
+            // 当前活动会话的每一轮都显示运行状态，而不只覆盖尚未落盘的首轮。
+            // agent.state 离开 running 后该标记随下一次 store 更新立即消失。
+            busy:
+              opt?.running === true ||
+              (s.agentState === "running" && isActiveSession),
           };
         }),
       ],
@@ -494,12 +503,13 @@ export function SessionSidebar() {
                   )
                 }
                 renderTrailingAction={(item) => {
-                  // 会话行运行中：行尾旋转指示器（新会话发出首条消息即出现）。
+                  // 会话行运行中：非对称圆环避免多辐条图标在掉帧时产生
+                  // 停转/反转的视觉错觉；独立 CSS 动画保持恒定角速度。
                   if (item.kind !== "project") {
                     return item.busy ? (
-                      <Loader
+                      <LoaderCircle
                         aria-hidden="true"
-                        className="size-3.5 shrink-0 animate-spin text-accent"
+                        className="session-busy-spinner size-3.5 shrink-0 text-accent"
                       />
                     ) : undefined;
                   }
