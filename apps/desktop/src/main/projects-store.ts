@@ -115,11 +115,15 @@ export class ProjectsStore {
       let sessions: ProjectSessionInfo[] = [];
       try {
         const infos = await SessionManager.list(cwd, this.sessionsDir);
-        sessions = infos.map((i) => ({
-          file: i.path ?? "",
-          name: i.name,
-          modified: i.modified.getTime(),
-        }));
+        // 完整 clone 会保留源消息时间；created 才代表新副本的产生时刻。
+        // 取两者较新值并重新排序，避免项目树刷新后把新分叉放回源会话下面。
+        sessions = infos
+          .map((i) => ({
+            file: i.path ?? "",
+            name: i.name,
+            modified: Math.max(i.modified.getTime(), i.created.getTime()),
+          }))
+          .sort((a, b) => (b.modified ?? 0) - (a.modified ?? 0));
       } catch {
         // project dir may have been deleted; surface it as empty
       }

@@ -293,11 +293,16 @@ export class PiAdapter {
     const cwd = this.canonicalCwd ?? canonicalize(this.host.getCwd());
     if (!cwd) return [];
     const infos = await SessionManager.list(cwd, this.host.paths.sessionsDir);
-    return infos.map((i) => ({
-      file: i.path ?? "",
-      name: (i as { name?: string }).name,
-      modified: (i as { modified?: number | string | Date }).modified as number | undefined,
-    }));
+    // Pi 的 modified 只看最后一条消息；完整 clone 会沿用源消息时间，导致
+    // 新副本和源会话同时间、刷新后顺序不稳定。created 是新文件的创建时间，
+    // 取二者较新值并重新排序，保证分叉会话在重启后仍位于最顶部。
+    return infos
+      .map((i) => ({
+        file: i.path ?? "",
+        name: i.name,
+        modified: Math.max(i.modified.getTime(), i.created.getTime()),
+      }))
+      .sort((a, b) => b.modified - a.modified);
   }
 
   async openSession(pathInput: string): Promise<{ sessionId: string }> {
@@ -323,14 +328,29 @@ export class PiAdapter {
     return { sessionId: this.sessionId };
   }
 
-  async forkSession(entryId: string): Promise<{ sessionId: string }> {
+  async forkSession(
+    entryId: string | null,
+  ): Promise<{ sessionId: string; file: string; name?: string }> {
     const runtime = this.requireRuntime();
+    // 侧边栏的「分叉」传 null：取当前叶节点并使用 clone 语义，完整保留
+    // 该分支上的助手回复、工具记录、标题和配置条目。传入具体用户消息时
+    // 仍沿用原有的「在该消息前分叉并恢复输入」能力。
+    const targetEntryId = entryId ?? runtime.session.sessionManager.getLeafId();
+    if (!targetEntryId) throw new Error("该对话还没有可分叉的历史记录");
     // 分叉是同一段对话的延续：继承源会话当前的权限/模型。
     const carried = this.currentPrefs();
-    await this.replaceSession(() => runtime.fork(entryId));
+    await this.replaceSession(() =>
+      runtime.fork(targetEntryId, entryId === null ? { position: "at" } : undefined),
+    );
     await this.applyPrefs(carried);
     this.recordPrefs();
-    return { sessionId: this.sessionId };
+    const file = this.session?.sessionFile;
+    if (!file) throw new Error("分叉会话未能写入磁盘");
+    return {
+      sessionId: this.sessionId,
+      file,
+      ...(this.session?.sessionName ? { name: this.session.sessionName } : {}),
+    };
   }
 
   renameSession(name: string): void {
@@ -531,6 +551,9 @@ export class PiAdapter {
     if (!this.modelRuntime!.hasConfiguredAuth(model.provider)) {
       throw new Error(`auth_required: provider ${provider} not configured`);
     }
+    // 会话恢复/完整 clone 已经从 JSONL 还原相同模型时无需再写一条
+    // model_change；保持克隆文件在开始继续对话前与源历史完全一致。
+    if (session.model?.provider === model.provider && session.model.id === model.id) return;
     await session.setModel(model);
   }
 

@@ -84,9 +84,15 @@ export type SessionOpenResult = { sessionId: string };
 export type SessionNewResult = { sessionId: string };
 
 export interface SessionForkRequest {
-  entryId: string;
+  /** null clones the complete active branch through its current leaf. */
+  entryId: string | null;
 }
-export type SessionForkResult = { sessionId: string };
+export type SessionForkResult = {
+  sessionId: string;
+  /** The cloned JSONL is created before the command resolves. */
+  file: string;
+  name?: string;
+};
 
 export interface SessionRenameRequest {
   name: string;

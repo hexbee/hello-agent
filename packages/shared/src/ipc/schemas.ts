@@ -91,10 +91,10 @@ export const validateSessionOpen = objectValidator<SessionOpenInput>({
 });
 
 export interface SessionForkInput {
-  entryId: string;
+  entryId: string | null;
 }
 export const validateSessionFork = objectValidator<SessionForkInput>({
-  entryId: (v) => str(v) && v.length > 0 && v.length <= 256,
+  entryId: (v) => v === null || (str(v) && v.length > 0 && v.length <= 256),
 });
 
 export interface SessionRenameInput {

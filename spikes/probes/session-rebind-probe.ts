@@ -4,7 +4,7 @@
 import { mkdtempSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { PermissionManager, createAuditSink } from "../../apps/desktop/src/main/agent/permission-manager.js";
 import { PiAdapter } from "../../apps/desktop/src/main/agent/pi-adapter.js";
 import type { AgentHost } from "../../apps/desktop/src/main/agent/host.js";
@@ -96,6 +96,35 @@ async function main(): Promise<void> {
     forkOk = false;
   }
   r.check("fork with bad entry throws safely", !forkOk || typeof adapter.sessionId === "string");
+
+  // Sidebar clone semantics: null means duplicate through the current leaf,
+  // switch to the newly created file, and retain every persisted history entry.
+  const sourceFile = adapter.sessionFilePath()!;
+  const sourceEntries = readFileSync(sourceFile, "utf8")
+    .trim()
+    .split("\n")
+    .slice(1)
+    .map((line) => JSON.parse(line) as { id?: string });
+  const cloned = await adapter.forkSession(null);
+  const clonedEntries = readFileSync(cloned.file, "utf8")
+    .trim()
+    .split("\n")
+    .slice(1)
+    .map((line) => JSON.parse(line) as { id?: string });
+  r.check(
+    "full clone creates and activates a new session file",
+    cloned.file !== sourceFile && adapter.sessionFilePath() === cloned.file,
+  );
+  r.check(
+    "full clone preserves the complete active history",
+    JSON.stringify(clonedEntries.map((entry) => entry.id)) ===
+      JSON.stringify(sourceEntries.map((entry) => entry.id)),
+  );
+  const orderedSessions = await adapter.listSessions();
+  r.check(
+    "full clone is the newest session after a fresh list scan",
+    !!orderedSessions[0]?.file && realpathSync(orderedSessions[0].file) === realpathSync(cloned.file),
+  );
 
   // rename uses pi API
   adapter.renameSession("spike-renamed");

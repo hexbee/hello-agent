@@ -910,14 +910,78 @@ class Store {
     }
   }
 
-  async fork(entryId: string): Promise<void> {
+  async fork(entryId: string | null): Promise<void> {
     try {
       const r = unwrap(await api().session.fork(entryId));
+      // Main 已原子写好克隆文件；先把它同步插入侧栏并设为活动项，避免等待
+      // 随后的完整 snapshot / projects 扫描才看到新会话。历史条目暂时保留；
+      // assistant 的 renderer id 含 sessionId，先换成新 id，快照回来时即可
+      // 就地校准而不会把同一份历史再插入一遍。
+      if (entryId === null) {
+        const newSession = { file: r.file, name: r.name, modified: Date.now() };
+        const upsert = (sessions: SessionInfo[]) => [
+          newSession,
+          ...sessions.filter((session) => session.file !== r.file),
+        ];
+        let assistantOrdinal = 0;
+        const clonedEntries = this.state.entries.map((entry) => {
+          if (entry.kind !== "message" || entry.role !== "assistant") return entry;
+          assistantOrdinal += 1;
+          return { ...entry, messageId: `${r.sessionId}:m:${assistantOrdinal}` };
+        });
+        this.set({
+          session: { id: r.sessionId, file: r.file, name: r.name },
+          entries: clonedEntries,
+          sessions: upsert(this.state.sessions),
+          projects: this.state.projects.map((project) =>
+            project.cwd === this.state.cwd
+              ? { ...project, sessions: upsert(project.sessions) }
+              : project,
+          ),
+        });
+      }
       await this.afterSessionSwitch(r.sessionId);
-      this.set({ banner: { kind: "info", text: "已基于所选消息新建对话" } });
+      // 侧边栏已通过新增并激活的会话行反馈完整 clone，无需再弹顶部提示。
+      this.set(
+        entryId === null
+          ? { banner: null }
+          : { banner: { kind: "info", text: "已基于所选消息新建对话" } },
+      );
     } catch (e) {
       this.set({ banner: { kind: "error", text: String(e) } });
     }
+  }
+
+  /**
+   * 从侧边栏任意已保存对话创建完整副本：必要时先切项目、再打开目标
+   * 对话，随后从当前叶节点 clone。菜单在运行中会禁用，这里仍做一次
+   * 防御性检查，避免异步点击竞态中断正在执行的轮次。
+   */
+  async forkSessionCopy(projectCwd: string, path: string): Promise<void> {
+    if (this.state.agentState === "running") {
+      this.set({ banner: { kind: "info", text: "请等待当前轮次结束后再分叉会话" } });
+      return;
+    }
+
+    if (this.state.cwd !== projectCwd) {
+      await this.openProject(projectCwd);
+      // openProject 会自行展示错误；切换失败时不要继续在旧项目里打开同名路径。
+      if (this.state.cwd !== projectCwd) return;
+    }
+
+    const targetIsOpen =
+      this.state.session?.file === path ||
+      (!!this.state.session?.id && fileMatchesSession(path, this.state.session.id));
+    if (!targetIsOpen) {
+      await this.openSession(path);
+      const opened =
+        this.state.session?.file === path ||
+        (!!this.state.session?.id && fileMatchesSession(path, this.state.session.id));
+      // openSession 会自行展示错误；目标没有成功打开就停止。
+      if (!opened) return;
+    }
+
+    await this.fork(null);
   }
 
   /** Session replacement clears local chat state; snapshot rebuilds history. */

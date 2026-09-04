@@ -18,6 +18,7 @@ import {
   SquarePen,
   Trash2,
 } from "lucide-react";
+import type { SVGProps } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AnimatedSidebar,
@@ -44,6 +45,27 @@ import { useTouchCapable } from "../lib/hooks/use-touch-capable";
 
 function basename(p: string): string {
   return p.split("/").filter(Boolean).pop() ?? p;
+}
+
+/** 与产品稿一致：一条会话向右分成两条可继续的路径。 */
+function ForkIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      {...props}
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 12h4.5c4 0 4-6 8-6H21" />
+      <path d="m17.5 2.5 3.5 3.5-3.5 3.5" />
+      <path d="M7.5 12c4 0 4 6 8 6H21" />
+      <path d="m17.5 14.5 3.5 3.5-3.5 3.5" />
+    </svg>
+  );
 }
 
 /** 每个项目展开时默认可见的会话数；「展开更多」每次追加同样数量。 */
@@ -289,6 +311,8 @@ export function SessionSidebar() {
       );
     }
     const isCurrentProject = findProjectOf(item.id) === s.cwd;
+    const projectCwd = findProjectOf(item.id);
+    const forkingDisabled = s.agentState === "running" || !projectCwd;
     return (
       <>
         <button
@@ -299,6 +323,25 @@ export function SessionSidebar() {
           className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-xs text-foreground outline-none transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
         >
           重命名
+        </button>
+        <button
+          type="button"
+          disabled={forkingDisabled}
+          title={
+            s.agentState === "running"
+              ? "当前轮次结束后可分叉会话"
+              : projectCwd
+                ? undefined
+                : "找不到该对话所属项目"
+          }
+          onClick={() => {
+            controls.close();
+            if (projectCwd) void store.forkSessionCopy(projectCwd, item.id);
+          }}
+          className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-xs text-foreground outline-none transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40"
+        >
+          <ForkIcon aria-hidden="true" className="size-3.5 shrink-0" />
+          分叉
         </button>
         <div aria-hidden="true" className="my-1 h-px bg-border" />
         <button
@@ -542,8 +585,6 @@ export function SessionSidebar() {
           ) : null}
         </div>
 
-        {s.forkCandidates.length > 0 && <ForkSection />}
-
         {/* 左下角设置入口：打开设置页（Provider 凭据等配置）。 */}
         <div className="border-t border-border px-3 py-2">
           <button
@@ -556,35 +597,5 @@ export function SessionSidebar() {
         </div>
       </div>
     </AnimatedSidebar>
-  );
-}
-
-function ForkSection() {
-  const s = useStore();
-  const [forkOpen, setForkOpen] = useState(false);
-
-  return (
-    <div className="border-t border-border px-3 py-2">
-      <button
-        className="flex w-full cursor-pointer items-center justify-between text-xs text-muted-foreground hover:text-fg"
-        onClick={() => setForkOpen(!forkOpen)}
-      >
-        从历史新建对话 <span>{forkOpen ? "▾" : "▸"}</span>
-      </button>
-      {forkOpen && (
-        <div className="mt-1 max-h-40 overflow-y-auto">
-          {s.forkCandidates.map((c) => (
-            <button
-              key={c.entryId}
-              className="block w-full cursor-pointer truncate rounded px-1 py-1 text-left text-[11px] text-muted-foreground hover:bg-panel-2 hover:text-fg"
-              title={c.text}
-              onClick={() => void store.fork(c.entryId)}
-            >
-              ⎇ {c.text.slice(0, 40) || "(空消息)"}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
   );
 }

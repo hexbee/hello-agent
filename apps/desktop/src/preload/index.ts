@@ -117,7 +117,9 @@ const api = {
     open: (path: string): Promise<Result<{ sessionId: string }>> =>
       invoke("session.open", { path } satisfies SessionOpenRequest),
     create: (): Promise<Result<{ sessionId: string }>> => invoke("session.new"),
-    fork: (entryId: string): Promise<Result<{ sessionId: string }>> =>
+    fork: (
+      entryId: string | null,
+    ): Promise<Result<{ sessionId: string; file: string; name?: string }>> =>
       invoke("session.fork", { entryId } satisfies SessionForkRequest),
     rename: (name: string): Promise<Result<{ renamed: true }>> =>
       invoke("session.rename", { name } satisfies SessionRenameRequest),
