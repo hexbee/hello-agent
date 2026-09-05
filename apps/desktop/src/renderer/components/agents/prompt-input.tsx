@@ -63,6 +63,7 @@ export interface PromptInputProps extends Omit<
   defaultValue?: string;
   onValueChange?: (value: string) => void;
   models?: PromptModel[];
+  modelHint?: ReactNode;
   model?: string;
   defaultModel?: string;
   onModelChange?: (model: string) => void;
@@ -79,6 +80,7 @@ export interface PromptInputProps extends Omit<
   minRows?: number;
   maxRows?: number;
   leadingAction?: ReactNode;
+  trailingAction?: ReactNode;
   className?: string;
 }
 
@@ -109,6 +111,7 @@ export function PromptInput({
   defaultValue = "",
   onValueChange,
   models = [],
+  modelHint,
   model,
   defaultModel,
   onModelChange,
@@ -124,6 +127,7 @@ export function PromptInput({
   minRows = 2,
   maxRows = 8,
   leadingAction,
+  trailingAction,
   className,
   disabled,
   placeholder = "Ask the agent to do something…",
@@ -247,7 +251,7 @@ export function PromptInput({
         className="scrollbar-hide block w-full resize-none overflow-y-auto bg-transparent px-2 pt-1.5 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/55"
       />
 
-      <div className="mt-1 flex min-h-8 items-center gap-1">
+      <div className="mt-1 flex min-h-8 flex-wrap items-center gap-1">
         {actions.length ? (
           <MorphPopover open={actionsOpen} onOpenChange={setActionsOpen}>
             <MorphPopoverTrigger>
@@ -379,7 +383,7 @@ export function PromptInput({
           <Select
             value={currentModelValue}
             onValueChange={setModel}
-            disabled={disabled || loading}
+            disabled={disabled}
             className="min-w-0"
             searchable
             searchPlaceholder="搜索模型…"
@@ -397,6 +401,7 @@ export function PromptInput({
               </span>
             </SelectTrigger>
             <SelectContent className="right-auto w-80 shadow-none">
+              {modelHint ? <div className="border-b border-border/60 px-2 py-2 text-xs leading-5 text-muted-foreground">{modelHint}</div> : null}
               {groupModels(models).flatMap((section) => [
                 section.group
                   ? (<SelectGroupLabel
@@ -432,6 +437,8 @@ export function PromptInput({
             </SelectContent>
           </Select>
         ) : null}
+
+        {trailingAction}
 
         <Button
           type={loading ? "button" : "submit"}

@@ -8,6 +8,7 @@ import {
   validateAuthSubmitKey,
   validateAuthRemoveKey,
   validateModelsSelect,
+  validateThinkingSet,
   validateSessionDelete,
   validateSessionFork,
   validateSessionOpen,
@@ -69,6 +70,7 @@ export function registerIpc(opts: {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       for (const code of [
+        "invalid_input",
         "no_runtime",
         "untrusted_workspace",
         "busy",
@@ -249,7 +251,17 @@ export function registerIpc(opts: {
       requireTrusted("restricted");
       const v = validateModelsSelect(input);
       if (!v.ok) return v;
-      return ok({ selected: await adapter().selectModel(v.data.ref) });
+      return ok(await adapter().requestModel(v.data.ref));
+    });
+  });
+
+  ipcMain.handle("models.setThinking", async (event, input) => {
+    return wrap(async () => {
+      if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
+      requireTrusted("restricted");
+      const v = validateThinkingSet(input);
+      if (!v.ok) return v;
+      return ok(adapter().setThinkingLevel(v.data.level));
     });
   });
 

@@ -34,7 +34,7 @@ Renderer：`react@19.2.8` · `tailwindcss@4.3.3` · `markstream-react@2.0.3`（b
 
 - ✅ Main：PermissionManager / PiAdapter / 隔离工厂 / IPC 校验（Spike 代码直接演进）
 - ✅ Renderer：React 产品界面 —— 工作区 Trust 门控、流式 Markdown 对话、工具卡、
-  审批卡、会话列表（新建/打开/重命名/删除到废纸篓/从历史分叉）、模型选择
+  审批卡、会话列表（新建/打开/重命名/删除到废纸篓/从历史分叉/置顶）、跨项目对话标题搜索（⌘/Ctrl+Shift+F）、模型选择
 - ✅ 可恢复删除：会话删除走系统废纸篓（仅限应用自有目录）
 - ✅ 鉴权流程（§8）：SafeStorage CredentialStore（Keychain/DPAPI）+ API key 提交验证 +
   provider 列表与凭据状态 UI；`pnpm probe:auth` 验证加密落盘与 ModelRuntime 解析

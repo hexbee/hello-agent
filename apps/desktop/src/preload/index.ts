@@ -17,6 +17,10 @@ import type {
   AuthRemoveKeyRequest,
   AuthSubmitKeyRequest,
   ModelsSelectRequest,
+  ModelsSelectResult,
+  ThinkingLevel,
+  ThinkingConfig,
+  ThinkingSetRequest,
   Result,
   SessionDeleteRequest,
   SessionForkRequest,
@@ -54,6 +58,7 @@ const INVOKE_COMMANDS = new Set<Channel>([
   "auth.cancel",
   "models.list",
   "models.select",
+  "models.setThinking",
   "session.list",
   "session.open",
   "session.new",
@@ -108,8 +113,10 @@ const api = {
   },
   models: {
     list: (): Promise<Result<AgentSnapshot["models"]>> => invoke("models.list"),
-    select: (ref: string): Promise<Result<{ selected: string | null }>> =>
+    select: (ref: string): Promise<Result<ModelsSelectResult>> =>
       invoke("models.select", { ref } satisfies ModelsSelectRequest),
+    setThinking: (level: ThinkingLevel): Promise<Result<ThinkingConfig>> =>
+      invoke("models.setThinking", { level } satisfies ThinkingSetRequest),
   },
   session: {
     list: (): Promise<Result<Array<{ file: string; name?: string; modified?: number }>>> =>

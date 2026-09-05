@@ -1,4 +1,4 @@
-import type { AgentSnapshot } from "./events.js";
+import type { AgentSnapshot, ContextUsage } from "./events.js";
 
 // Renderer → Main command contract — docs/desktop-agent-tech-stack.md §6.2
 // Every command defines: request, success result, error result. Runtime
@@ -66,7 +66,11 @@ export type ModelsListResult = AgentSnapshot["models"];
 export interface ModelsSelectRequest {
   ref: string; // "provider/id"
 }
-export type ModelsSelectResult = { selected: string | null };
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+export type ThinkingConfig = { thinkingLevel: ThinkingLevel; thinkingLevels: ThinkingLevel[] };
+export type ThinkingSetRequest = { level: ThinkingLevel };
+export type ModelsSelectResult = { selected: string | null; pendingModel: string | null; contextUsage: ContextUsage | null } & ThinkingConfig;
 
 // ── sessions ─────────────────────────────────────────────────────────────────
 

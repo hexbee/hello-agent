@@ -1,7 +1,7 @@
 // Renderer state store — applies the §6.1 product event stream on top of
 // snapshot replay, with sequence-gap detection → agent.snapshot recovery.
 
-import type { AgentEvent, AgentSnapshot, SafePreview } from "@hello-agent/shared";
+import type { AgentEvent, AgentSnapshot, SafePreview, ThinkingLevel } from "@hello-agent/shared";
 import type { ProjectSessions } from "../preload/index";
 import { useSyncExternalStore } from "react";
 import { api, unwrap } from "./api";
@@ -69,6 +69,13 @@ export function fileMatchesSession(file: string | undefined, sessionId: string):
   return !!file && file.endsWith(`_${sessionId}.jsonl`);
 }
 
+export type ModelNotice = {
+  phase: "queued" | "switched" | "cancelled" | "error";
+  from: string | null;
+  target: string | null;
+  error?: string;
+};
+
 export type StoreState = {
   phase: "gate" | "ready";
   cwd: string;
@@ -82,6 +89,11 @@ export type StoreState = {
   session: { id: string; file?: string; name?: string } | null;
   models: Array<{ provider: string; id: string; context: number | null }>;
   selectedModel: string | null;
+  pendingModel: string | null;
+  modelNotice: ModelNotice | null;
+  contextUsage: AgentSnapshot["contextUsage"];
+  thinkingLevel: ThinkingLevel;
+  thinkingLevels: ThinkingLevel[];
   authState: AgentSnapshot["authState"];
   authProviders: AgentSnapshot["authProviders"];
   forkCandidates: Array<{ entryId: string; text: string }>;
@@ -137,6 +149,11 @@ const initialState: StoreState = {
   session: null,
   models: [],
   selectedModel: null,
+  pendingModel: null,
+  modelNotice: null,
+  contextUsage: null,
+  thinkingLevel: "off",
+  thinkingLevels: [],
   authState: { configured: false, provider: null, maskedHint: null },
   authProviders: [],
   forkCandidates: [],
@@ -148,6 +165,7 @@ const initialState: StoreState = {
 
 class Store {
   private state: StoreState = initialState;
+  private modelSelectionVersion = 0;
   private listeners = new Set<() => void>();
   private lastSequence = 0;
   private seqStarted = false;
@@ -575,9 +593,17 @@ class Store {
     this.set({
       entries,
       pendingApprovals: snap.pendingApprovals,
+      modelNotice: this.state.session?.id !== snap.session.id ? null
+        : this.state.modelNotice?.phase === "queued" && !snap.pendingModel && snap.selectedModel === this.state.modelNotice.target
+          ? { ...this.state.modelNotice, phase: "switched" }
+          : this.state.modelNotice,
       session: snap.session.id ? snap.session : null,
       models: snap.models,
       selectedModel: snap.selectedModel,
+      pendingModel: snap.pendingModel ?? null,
+      contextUsage: snap.contextUsage ?? null,
+      thinkingLevel: snap.thinkingLevel ?? "off",
+      thinkingLevels: snap.thinkingLevels ?? [],
       authState: snap.authState,
       authProviders: snap.authProviders ?? this.state.authProviders,
       forkCandidates: snap.forkCandidates ?? [],
@@ -613,6 +639,8 @@ class Store {
 
     switch (e.type) {
       case "message.started": {
+        // A snapshot may already contain this message when its start is replayed.
+        if (this.state.entries.some((x) => x.kind === "message" && x.messageId === e.messageId)) break;
         this.set({
           entries: [
             ...this.state.entries,
@@ -783,6 +811,23 @@ class Store {
         });
         break;
       }
+      case "model.selection": {
+        this.modelSelectionVersion++;
+        const r = e.selection;
+        this.set({ selectedModel: r.selected, pendingModel: r.pendingModel,
+          contextUsage: r.contextUsage, thinkingLevel: r.thinkingLevel, thinkingLevels: r.thinkingLevels,
+          modelNotice: {
+            phase: e.error ? "error" : "switched",
+            from: this.state.selectedModel,
+            target: e.error ? this.state.pendingModel : r.selected,
+            error: e.error,
+          },
+        });
+        break;
+      }
+      case "context.usage":
+        this.set({ contextUsage: e.usage });
+        break;
       case "context.compaction":
         break; // v0.1: no dedicated UI; visible via snapshot only
     }
@@ -793,6 +838,7 @@ class Store {
   async prompt(text: string): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
+    if (!this.state.pendingModel) this.set({ modelNotice: null });
     const messageId = `local:u:${Date.now()}`;
     // 乐观追加：main 侧 prompt IPC 只等 preflight 就返回，但事件与 IPC
     // 返回的到达顺序不保证——先画气泡再发请求，失败时回滚。
@@ -994,11 +1040,36 @@ class Store {
   }
 
   async selectModel(ref: string): Promise<void> {
+    const version = ++this.modelSelectionVersion;
+    const wasPending = this.state.pendingModel;
+    const from = this.state.selectedModel;
+    const sessionId = this.state.session?.id;
     try {
       const r = unwrap(await api().models.select(ref));
-      this.set({ selectedModel: r.selected, banner: null });
+      if (sessionId !== this.state.session?.id || version !== this.modelSelectionVersion) return;
+      this.set({ selectedModel: r.selected, pendingModel: r.pendingModel, contextUsage: r.contextUsage,
+        thinkingLevel: r.thinkingLevel, thinkingLevels: r.thinkingLevels,
+        modelNotice: !r.pendingModel && r.selected === from && !wasPending ? null : {
+          phase: r.pendingModel ? "queued" : r.selected === from ? "cancelled" : "switched",
+          from, target: r.pendingModel ?? r.selected,
+        },
+      });
     } catch (e) {
-      this.set({ banner: { kind: "error", text: String(e) } });
+      if (sessionId !== this.state.session?.id || version !== this.modelSelectionVersion) return;
+      this.set({ modelNotice: { phase: "error", from, target: ref, error: String(e) } });
+    }
+  }
+
+  dismissModelNotice(): void {
+    this.set({ modelNotice: null });
+  }
+
+  async setThinkingLevel(level: ThinkingLevel): Promise<void> {
+    try {
+      const config = unwrap(await api().models.setThinking(level));
+      this.set({ ...config, banner: null });
+    } catch (e) {
+      this.set({ banner: { kind: "error", text: `思考强度切换失败：${String(e)}` } });
     }
   }
 

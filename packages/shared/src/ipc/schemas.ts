@@ -1,7 +1,7 @@
 // Runtime validators for every Renderer → Main command — §6.3.
 // Hand-written, dependency-free. TypeScript types are NOT runtime validation.
 
-import type { Result } from "./commands.js";
+import { THINKING_LEVELS, type Result, type ThinkingSetRequest } from "./commands.js";
 
 type Validator<T> = (input: unknown) => Result<T>;
 
@@ -79,6 +79,10 @@ export interface ModelsSelectInput {
 }
 export const validateModelsSelect = objectValidator<ModelsSelectInput>({
   ref: (v) => str(v) && v.length <= 256,
+});
+
+export const validateThinkingSet = objectValidator<ThinkingSetRequest>({
+  level: (v) => THINKING_LEVELS.some((level) => level === v),
 });
 
 // ── sessions ─────────────────────────────────────────────────────────────────

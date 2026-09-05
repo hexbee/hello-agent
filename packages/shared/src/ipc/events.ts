@@ -1,3 +1,5 @@
+import type { ThinkingLevel, ModelsSelectResult } from "./commands.js";
+
 // Product event contract — docs/desktop-agent-tech-stack.md §6.1
 // Single source of truth for Main → Renderer events.
 
@@ -12,6 +14,13 @@ export type SafePreview = {
   text: string;
   truncated: boolean;
   redacted: boolean;
+};
+
+/** Current context occupancy, not cumulative billing tokens. Null tokens means unknown. */
+export type ContextUsage = {
+  tokens: number | null;
+  contextWindow: number;
+  percent: number | null;
 };
 
 export type AgentEvent =
@@ -39,6 +48,8 @@ export type AgentEvent =
       kind: "llm" | "tool" | "permission" | "network" | "runtime";
       message: string;
     })
+  | (EventBase & { type: "model.selection"; selection: ModelsSelectResult; error?: string })
+  | (EventBase & { type: "context.usage"; usage: ContextUsage | null })
   | (EventBase & { type: "context.compaction"; phase: "started" | "finished" })
   | (EventBase & {
       type: "approval.requested";
@@ -123,6 +134,10 @@ export type AgentSnapshot = {
   }>;
   models: Array<{ provider: string; id: string; context: number | null }>;
   selectedModel: string | null;
+  pendingModel?: string | null;
+  contextUsage?: ContextUsage | null;
+  thinkingLevel?: ThinkingLevel;
+  thinkingLevels?: ThinkingLevel[];
   /** User messages with real JSONL entry ids — fork selector source (§5.1 session.fork). */
   forkCandidates: Array<{ entryId: string; text: string }>;
 };

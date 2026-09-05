@@ -3,6 +3,7 @@
 // 切换会话/项目时恢复该目录最后一次的选择。仅存非敏感偏好
 // （模式枚举 + "provider/modelId" 引用），不含任何凭据。
 
+import type { ThinkingLevel } from "@hello-agent/shared";
 import { readFileSync, writeFileSync } from "node:fs";
 
 export type PrefPermissionMode = "default" | "full";
@@ -11,6 +12,7 @@ export interface SessionPrefs {
   permissionMode: PrefPermissionMode;
   /** Canonical "provider/modelId" 引用；null = 只记住了权限模式。 */
   model: string | null;
+  thinkingLevel?: ThinkingLevel;
 }
 
 interface PrefsFile {

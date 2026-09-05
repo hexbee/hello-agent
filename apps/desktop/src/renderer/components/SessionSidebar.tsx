@@ -12,6 +12,9 @@ import {
   MessageSquare,
   MoreHorizontal,
   Pencil,
+  Pin,
+  PinOff,
+  Search,
   Plug,
   Plus,
   Settings,
@@ -40,6 +43,7 @@ import {
   type SidebarResourceMove,
 } from "./agents/ai-sidebar";
 import { store, useStore, fileMatchesSession, type StoreState } from "../store";
+import { SessionSearchDialog } from "./SessionSearchDialog";
 import { isMac } from "../platform";
 import { useTouchCapable } from "../lib/hooks/use-touch-capable";
 
@@ -130,7 +134,43 @@ function toTree(s: StoreState): SidebarResource[] {
 export function SessionSidebar() {
   const s = useStore();
   const activeId = s.session?.file ?? null;
-  const items = toTree(s);
+  const allItems = useMemo(() => toTree(s), [
+    s.projects, s.optimisticSessions, s.session?.id, s.session?.file, s.agentState,
+  ]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [pinnedIds, setPinnedIds] = useState<string[]>(() => {
+    const saved = loadPref<unknown>("pinned-sessions", []);
+    return Array.isArray(saved) ? saved.filter((id): id is string => typeof id === "string") : [];
+  });
+  useEffect(() => savePref("pinned-sessions", pinnedIds), [pinnedIds]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "f" && !event.isComposing) {
+        event.preventDefault();
+        if (!s.settingsOpen) setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [s.settingsOpen]);
+  const pinnedSet = new Set(pinnedIds);
+  const sessionsById = new Map(allItems.flatMap((project) => project.children ?? []).map((item) => [item.id, item]));
+  const pinnedItems = pinnedIds.flatMap((id) => sessionsById.has(id) ? [sessionsById.get(id)!] : []);
+  const items = allItems.map((project) => ({ ...project, children: project.children?.filter((item) => !pinnedSet.has(item.id)) }));
+  const searchSessions = useMemo(() => {
+    const modifiedById = new Map(s.projects.flatMap((project) =>
+      project.sessions.map((session) => [session.file, session.modified ?? 0] as const),
+    ));
+    return allItems.flatMap((project) => (project.children ?? [])
+      .filter((item) => !item.id.startsWith("pending:"))
+      .map((item) => ({
+        id: item.id,
+        title: item.label,
+        project: project.label,
+        modified: modifiedById.get(item.id) ?? 0,
+      })));
+  }, [allItems, s.projects]);
+
   // 项目行尾的「新对话」钮与 ⋯ 钮一致：hover 设备上悬停显示，触屏常显。
   const canTouch = useTouchCapable();
   // 「项目」分区整体折叠（Codex 侧边栏的「项目 ⌄」）——持久化。
@@ -243,7 +283,9 @@ export function SessionSidebar() {
       void store.openSession(id);
     } else {
       // 其他项目：先切工作区（恢复信任 + 重建 runtime），再打开会话。
-      void store.openProject(projectCwd).then(() => store.openSession(id));
+      void store.openProject(projectCwd).then(() => {
+        if (store.getState().cwd === projectCwd) return store.openSession(id);
+      });
     }
   };
 
@@ -322,7 +364,20 @@ export function SessionSidebar() {
           title={item.id !== activeId ? "只能重命名当前对话" : undefined}
           className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-xs text-foreground outline-none transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
         >
+          <Pencil aria-hidden="true" className="size-3.5 shrink-0" />
           重命名
+        </button>
+        <button
+          type="button"
+          disabled={!projectCwd}
+          onClick={() => {
+            controls.close();
+            setPinnedIds((ids) => ids.includes(item.id) ? ids.filter((id) => id !== item.id) : [item.id, ...ids]);
+          }}
+          className={MENU_ACTION_CLASS}
+        >
+          {pinnedSet.has(item.id) ? <PinOff aria-hidden="true" className="size-3.5 shrink-0" /> : <Pin aria-hidden="true" className="size-3.5 shrink-0" />}
+          {pinnedSet.has(item.id) ? "取消置顶" : "置顶"}
         </button>
         <button
           type="button"
@@ -364,6 +419,8 @@ export function SessionSidebar() {
   };
 
   return (
+    <>
+    {searchOpen && <SessionSearchDialog sessions={searchSessions} onClose={() => setSearchOpen(false)} onSelect={select} />}
     <AnimatedSidebar
       collapsible="offcanvas"
       resizable
@@ -382,9 +439,13 @@ export function SessionSidebar() {
             <span aria-hidden="true" className="h-full min-w-0 flex-1" />
           </div>
         )}
-        {/* 顶部操作区：仅“新对话”已经接通；其余入口保留产品方向，明确标记
-            “即将推出”并禁用，避免形成点击后无反馈的死按钮。 */}
+        {/* 顶部操作区。 */}
         <AnimatedSidebarMenu className="gap-1 px-2 py-3">
+          <AnimatedSidebarMenuItem>
+            <AnimatedSidebarMenuButton icon={<Search className="size-4" />} onSelect={() => setSearchOpen(true)} className="font-normal text-foreground" badge={`${isMac ? "⌘" : "Ctrl"}⇧F`}>
+              搜索对话
+            </AnimatedSidebarMenuButton>
+          </AnimatedSidebarMenuItem>
           <AnimatedSidebarMenuItem>
             <AnimatedSidebarMenuButton
               icon={<SquarePen className="size-4" />}
@@ -431,6 +492,16 @@ export function SessionSidebar() {
             播报区等）的包含块，避免其以 ICB 定位逃出 overflow 裁剪，把整个
             文档撑出多余的右侧滚动条。 */}
         <div className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2">
+          {pinnedItems.length > 0 && (
+            <section className="mb-3" aria-label="置顶对话">
+              <div className="flex h-8 items-center gap-1.5 px-2 text-xs font-medium text-muted-foreground"><Pin aria-hidden="true" className="size-3.5" />置顶</div>
+              <AISidebar items={pinnedItems} activeId={activeId} onActiveChange={select} onRename={rename}
+                onMove={() => Promise.reject(new Error("置顶对话暂不支持拖动排序"))}
+                renderIcon={() => <MessageSquare aria-hidden="true" className="size-4 shrink-0" />}
+                renderTrailingAction={(item) => item.busy ? <LoaderCircle aria-hidden="true" className="session-busy-spinner size-3.5 shrink-0 text-accent" /> : undefined}
+                renderMenu={renderMenu} ariaLabel="置顶对话" />
+            </section>
+          )}
           {/* 「项目」分区头：点击标题折叠/展开整区；右侧 ⋯ 菜单与 + 新建项目
               （对应 Codex 侧边栏的 项目 ⌄ … + ）。group/header：⋯ 与 + 默认
               隐藏，悬停整行（或键盘聚焦）时出现；触屏无 hover 则常显。 */}
@@ -600,5 +671,6 @@ export function SessionSidebar() {
         </div>
       </div>
     </AnimatedSidebar>
+    </>
   );
 }

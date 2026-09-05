@@ -12,11 +12,16 @@ import {
   type ExtensionFactory,
   type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
+import { THINKING_LEVELS } from "@hello-agent/shared";
 import type { Api, Context, Model } from "@earendil-works/pi-ai";
 import type {
   AgentEvent,
   AgentSnapshot,
   SafePreview,
+  ThinkingLevel,
+  ThinkingConfig,
+  ContextUsage,
+  ModelsSelectResult,
 } from "@hello-agent/shared";
 import { realpathSync, statSync } from "node:fs";
 import { basename, isAbsolute, resolve } from "node:path";
@@ -44,6 +49,8 @@ export class PiAdapter {
   private batcher: DeltaBatcher;
   private sequence = 0;
   private state: AgentState = "idle";
+  private pendingModel: string | null = null;
+  private modelSwitch: Promise<void> | undefined;
   private assistantOrdinal = 0;
   private activeMessageId: string | undefined;
   /** toolCallIds currently executing (for snapshot previews). */
@@ -122,7 +129,6 @@ export class PiAdapter {
       if (d.type === "error") console.warn("[pi-adapter] diagnostic:", d.message);
     }
 
-    this.assistantOrdinal = 0;
     await this.bindCurrentSession();
     // 恢复该目录最后一次的权限/模型；无记忆则沿用切换前的选择（继承最后一次对话）。
     await this.applyPrefs(this.opts.prefs?.getForProject(cwd) ?? carried);
@@ -138,6 +144,12 @@ export class PiAdapter {
   private async bindCurrentSession(): Promise<void> {
     this.unsubscribe?.();
     const session = this.session = this.runtime!.session;
+    // Snapshot IDs enumerate persisted assistants. Resume that same ordinal on
+    // reopen/fork/rebuild so live replies reconcile with their persisted copy.
+    this.assistantOrdinal = session.sessionManager.getEntries().filter(
+      (entry) => entry.type === "message" && entry.message.role === "assistant",
+    ).length;
+    this.activeMessageId = undefined;
     await session.bindExtensions({
       abortHandler: () => void this.permissions.cancelAll("agent abort"),
     });
@@ -149,6 +161,8 @@ export class PiAdapter {
   }
 
   private async disposeInternal(opts: { abortFirst: boolean }): Promise<void> {
+    this.pendingModel = null;
+    await this.modelSwitch;
     if (opts.abortFirst && this.state === "running") {
       try {
         await withTimeout(this.session?.abort() ?? Promise.resolve(), 3_000);
@@ -253,6 +267,7 @@ export class PiAdapter {
    * 注意：pi 的 session.prompt() 要等整轮 run 结束才 resolve，preflightResult
    * 只是旁路回调——绝不能 await 它，否则 renderer 的用户气泡会被拖到回复之后。 */
   async prompt(text: string): Promise<{ accepted: boolean }> {
+    await this.modelSwitch;
     const session = this.requireSession();
     return new Promise<{ accepted: boolean }>((resolve) => {
       let settled = false;
@@ -412,6 +427,8 @@ export class PiAdapter {
 
   /** §7.2 / §4.1: cancel approvals BEFORE replacing the live session. */
   private async replaceSession(replace: () => Promise<unknown>): Promise<void> {
+    this.pendingModel = null;
+    await this.modelSwitch;
     this.permissions.cancelAll("session replacement");
     this.permissions.resetSessionRules();
     try {
@@ -420,7 +437,6 @@ export class PiAdapter {
       /* timeout fallback */
     }
     await replace();
-    this.assistantOrdinal = 0;
     this.activeTools.clear();
     await this.bindCurrentSession();
   }
@@ -512,6 +528,79 @@ export class PiAdapter {
     return model ? `${model.provider}/${model.id}` : null;
   }
 
+  modelSelection(): ModelsSelectResult {
+    const model = this.session?.model;
+    return {
+      selected: model ? `${model.provider}/${model.id}` : null,
+      pendingModel: this.pendingModel,
+      contextUsage: this.contextUsage(),
+      ...this.thinkingConfig(),
+    };
+  }
+
+  async requestModel(ref: string): Promise<ModelsSelectResult> {
+    await this.modelSwitch;
+    this.requireSession();
+    this.resolveModelRef(ref);
+    if (this.state === "running") {
+      // Last selection wins; selecting the active model cancels the queued switch.
+      this.pendingModel = ref === this.modelSelection().selected ? null : ref;
+    } else {
+      await this.selectModel(ref);
+      this.pendingModel = null;
+    }
+    return this.modelSelection();
+  }
+
+  private async applyPendingModel(): Promise<void> {
+    const ref = this.pendingModel;
+    if (!ref) return;
+    this.pendingModel = null;
+    try {
+      await this.applyModelRef(ref);
+      this.recordPrefs();
+      this.emit(this.mk("model.selection", { selection: this.modelSelection() }));
+    } catch {
+      this.emit(this.mk("model.selection", {
+        selection: this.modelSelection(),
+        error: "模型切换失败，已保留当前模型。请检查目标模型及凭据后重试。",
+      }));
+    }
+  }
+
+  contextUsage(): ContextUsage | null {
+    return this.session?.getContextUsage() ?? null;
+  }
+
+  private emitContextUsage(): void {
+    // Pi notifies listeners before persisting message_end. Read after persistence,
+    // including the first assistant usage following a compaction boundary.
+    const session = this.session;
+    const sessionId = this.sessionId;
+    queueMicrotask(() => {
+      if (this.session !== session || this.sessionId !== sessionId) return;
+      this.emit(this.mk("context.usage", { usage: this.contextUsage() }));
+    });
+  }
+
+  thinkingConfig(): ThinkingConfig {
+    return {
+      thinkingLevel: this.session?.thinkingLevel ?? "off",
+      thinkingLevels: this.session?.getAvailableThinkingLevels() ?? [],
+    };
+  }
+
+  setThinkingLevel(level: ThinkingLevel): ThinkingConfig {
+    const session = this.requireSession();
+    if (this.state === "running") throw new Error("busy: agent running");
+    if (!session.getAvailableThinkingLevels().includes(level)) {
+      throw new Error("invalid_input: unsupported thinking level");
+    }
+    session.setThinkingLevel(level);
+    this.recordPrefs();
+    return this.thinkingConfig();
+  }
+
   /** 会话级权限模式切换（Renderer IPC 入口）；变化后同步记录偏好。 */
   setPermissionMode(mode: "default" | "full"): void {
     this.permissions.setMode(mode);
@@ -526,6 +615,7 @@ export class PiAdapter {
     return {
       permissionMode: this.permissions.getMode(),
       model: model ? `${model.provider}/${model.id}` : null,
+      thinkingLevel: this.session?.thinkingLevel ?? "off",
     };
   }
 
@@ -537,8 +627,7 @@ export class PiAdapter {
   }
 
   /** 解析 "provider/modelId" 并应用到当前会话；找不到/无凭据时抛错。 */
-  private async applyModelRef(ref: string): Promise<void> {
-    const session = this.requireSession();
+  private resolveModelRef(ref: string): Model<Api> {
     // ref 形如 "provider/model-id"；model id 本身可含斜杠（如 OpenRouter 的
     // "~anthropic/claude-fable-latest"、"z-ai/glm-5.2:free"），因此只按第一个
     // 斜杠切分，其余全部属于 model id。
@@ -551,6 +640,12 @@ export class PiAdapter {
     if (!this.modelRuntime!.hasConfiguredAuth(model.provider)) {
       throw new Error(`auth_required: provider ${provider} not configured`);
     }
+    return model;
+  }
+
+  private async applyModelRef(ref: string): Promise<void> {
+    const session = this.requireSession();
+    const model = this.resolveModelRef(ref);
     // 会话恢复/完整 clone 已经从 JSONL 还原相同模型时无需再写一条
     // model_change；保持克隆文件在开始继续对话前与源历史完全一致。
     if (session.model?.provider === model.provider && session.model.id === model.id) return;
@@ -575,6 +670,9 @@ export class PiAdapter {
       } catch {
         /* 模型不在目录/无凭据：保留 pi 的选择 */
       }
+    }
+    if (prefs.thinkingLevel && THINKING_LEVELS.includes(prefs.thinkingLevel)) {
+      this.requireSession().setThinkingLevel(prefs.thinkingLevel);
     }
   }
 
@@ -695,6 +793,7 @@ export class PiAdapter {
         break;
       }
       case "message_end": {
+        this.emitContextUsage();
         if ((event.message as { role?: string }).role !== "assistant") break;
         if (this.activeMessageId) {
           this.emit(this.mk("message.finished", { messageId: this.activeMessageId }));
@@ -761,15 +860,22 @@ export class PiAdapter {
         break;
       }
       case "agent_end":
+        // Pi can retry or compact after agent_end; only agent_settled is final.
+        break;
       case "agent_settled": {
-        this.disarmWatchdog();
-        this.state = this.lastError ? "failed" : "idle";
-        if (this.lastError) {
-          this.emit(this.mk("agent.failed", { kind: "llm", message: this.lastError }));
-        }
-        this.emit(this.mk("agent.state", { state: this.state }));
-        // 首轮对话结束后自动起标题（pi 不落盘无名会话，此时文件已写入）。
-        void this.autoTitleSession();
+        const complete = async () => {
+          await this.applyPendingModel();
+          this.emitContextUsage();
+          this.disarmWatchdog();
+          this.state = this.lastError ? "failed" : "idle";
+          if (this.lastError) {
+            this.emit(this.mk("agent.failed", { kind: "llm", message: this.lastError }));
+          }
+          this.emit(this.mk("agent.state", { state: this.state }));
+          // 首轮对话结束后自动起标题（pi 不落盘无名会话，此时文件已写入）。
+          void this.autoTitleSession();
+        };
+        this.modelSwitch = complete().finally(() => { this.modelSwitch = undefined; });
         break;
       }
       case "auto_retry_start": {
@@ -787,6 +893,7 @@ export class PiAdapter {
         break;
       }
       case "compaction_end": {
+        this.emitContextUsage();
         this.emit(this.mk("context.compaction", { phase: "finished" }));
         break;
       }
@@ -913,6 +1020,9 @@ export class PiAdapter {
         maskedHint: null,
       },
       models: [],
+      ...this.thinkingConfig(),
+      contextUsage: this.contextUsage(),
+      pendingModel: this.pendingModel,
       selectedModel:
         this.session?.model != null
           ? `${this.session.model.provider}/${this.session.model.id}`
