@@ -93,6 +93,8 @@ export type StoreState = {
   modelNotice: ModelNotice | null;
   contextUsage: AgentSnapshot["contextUsage"];
   thinkingLevel: ThinkingLevel;
+  skills: NonNullable<AgentSnapshot["skills"]>;
+  skillDiagnostics: NonNullable<AgentSnapshot["skillDiagnostics"]>;
   thinkingLevels: ThinkingLevel[];
   authState: AgentSnapshot["authState"];
   authProviders: AgentSnapshot["authProviders"];
@@ -153,6 +155,8 @@ const initialState: StoreState = {
   modelNotice: null,
   contextUsage: null,
   thinkingLevel: "off",
+  skills: [],
+  skillDiagnostics: [],
   thinkingLevels: [],
   authState: { configured: false, provider: null, maskedHint: null },
   authProviders: [],
@@ -603,6 +607,8 @@ class Store {
       pendingModel: snap.pendingModel ?? null,
       contextUsage: snap.contextUsage ?? null,
       thinkingLevel: snap.thinkingLevel ?? "off",
+      skills: snap.skills ?? [],
+      skillDiagnostics: snap.skillDiagnostics ?? [],
       thinkingLevels: snap.thinkingLevels ?? [],
       authState: snap.authState,
       authProviders: snap.authProviders ?? this.state.authProviders,

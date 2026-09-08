@@ -63,6 +63,8 @@ export function Composer({ autoFocus = false }: { autoFocus?: boolean }) {
         loading={running}
         onStop={() => void store.abort()}
         leadingAction={<ContextUsageIndicator usage={s.contextUsage ?? null} />}
+        skills={s.skills}
+        skillDiagnostics={s.skillDiagnostics}
         models={models}
         modelHint={s.entries.length > 0 || running ? (
           <>

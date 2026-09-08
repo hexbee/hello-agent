@@ -5,6 +5,7 @@
 
 import {
   createAgentSessionRuntime,
+  parseSkillBlock,
   SessionManager,
   type AgentSession,
   type AgentSessionEvent,
@@ -962,7 +963,7 @@ export class PiAdapter {
         messages.push({
           messageId: `u:${ordinal}`,
           role: "user",
-          text: extractText(m),
+          text: skillCommandForDisplay(extractText(m)),
           ...(Number.isFinite(m.timestamp) ? { timestamp: m.timestamp } : {}),
         });
       } else if (m.role === "toolResult") {
@@ -1019,6 +1020,8 @@ export class PiAdapter {
         provider: null,
         maskedHint: null,
       },
+      skills: this.session?.resourceLoader.getSkills().skills.map(({ name, description, filePath }) => ({ name, description, filePath })) ?? [],
+      skillDiagnostics: this.session?.resourceLoader.getSkills().diagnostics ?? [],
       models: [],
       ...this.thinkingConfig(),
       contextUsage: this.contextUsage(),
@@ -1030,7 +1033,7 @@ export class PiAdapter {
       forkCandidates: this.session
         ? this.session.getUserMessagesForForking().map((u) => ({
             entryId: u.entryId,
-            text: u.text.length > 200 ? `${u.text.slice(0, 200)}…` : u.text,
+            text: skillCommandForDisplay(u.text).length > 200 ? `${skillCommandForDisplay(u.text).slice(0, 200)}…` : skillCommandForDisplay(u.text),
           }))
         : [],
       authProviders: this.listAuthProviders(),
@@ -1105,4 +1108,10 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 
 export function sessionDisplayName(file: string | undefined): string {
   return file ? basename(file) : "(unsaved)";
+}
+
+/** Keep persisted skill instructions out of the visible user-message bubble. */
+export function skillCommandForDisplay(text: string): string {
+  const skill = parseSkillBlock(text);
+  return skill ? `/skill:${skill.name}${skill.userMessage ? ` ${skill.userMessage}` : ""}` : text;
 }

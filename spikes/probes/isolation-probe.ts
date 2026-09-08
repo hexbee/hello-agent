@@ -2,7 +2,7 @@
 //
 // Plants CLI-discovery bait (project extensions/skills, AGENTS.md/CLAUDE.md,
 // fake HOME ~/.pi tree, ~/.agents/skills) and runs the full isolated runtime
-// chain. Asserts none of the bait is read or executed, pi's project trust is
+// chain. Skills are now intentionally loaded; extensions remain disabled. Pi project trust is
 // bypassed without writing trust.json, and sessions land in the app dir.
 
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, renameSync } from "node:fs";
@@ -94,12 +94,15 @@ export default function () {};`,
     onApprovalResolved: () => {},
     audit: (rec) => auditSink.enqueue(rec),
   });
+  // Keep official skill discovery inside this fixture, not the developer's home.
+  process.env.HOME = home;
+  process.env.PI_CODING_AGENT_DIR = join(home, ".pi/agent");
   const adapter = new PiAdapter(host, permissions);
 
   cwd = project;
   await adapter.create(project);
 
-  // Restricted tools assertion happens on a second runtime below.
+  r.check("trusted project skill discovered", adapter.buildSnapshot([]).skills?.some((skill) => skill.name === "evil") === true);
 
   // ── assertions ──────────────────────────────────────────────────────────────
   r.check("runtime created", adapter.getState() === "idle");

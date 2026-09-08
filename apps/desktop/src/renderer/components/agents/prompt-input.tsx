@@ -1,7 +1,7 @@
 "use client";
 // beui.dev/components/agents/prompt-input
 
-import { ArrowUp, Check, Plus, Shield, Square } from "lucide-react";
+import { ArrowUp, Check, Plus, Puzzle, Shield, Square } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   type FormEvent,
@@ -9,6 +9,7 @@ import {
   type ReactNode,
   type TextareaHTMLAttributes,
   useCallback,
+  useId,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -62,6 +63,8 @@ export interface PromptInputProps extends Omit<
   value?: string;
   defaultValue?: string;
   onValueChange?: (value: string) => void;
+  skills?: Array<{ name: string; description: string; filePath: string }>;
+  skillDiagnostics?: Array<{ message: string; path?: string }>;
   models?: PromptModel[];
   modelHint?: ReactNode;
   model?: string;
@@ -110,6 +113,8 @@ export function PromptInput({
   value,
   defaultValue = "",
   onValueChange,
+  skills = [],
+  skillDiagnostics = [],
   models = [],
   modelHint,
   model,
@@ -148,6 +153,26 @@ export function PromptInput({
   const [actionsOpen, setActionsOpen] = useState(false);
   const [modesOpen, setModesOpen] = useState(false);
   const currentValue = value ?? internalValue;
+  const skillListId = useId();
+  const [skillBrowseOpen, setSkillBrowseOpen] = useState(false);
+  const [skillIndex, setSkillIndex] = useState(0);
+  const [skillsDismissed, setSkillsDismissed] = useState(false);
+  const [inputFocused, setInputFocused] = useState(false);
+  const skillToken = /^\/(?:skill(?::[^\s]*)?|[^\s]*)$/.test(currentValue);
+  const skillQuery = skillBrowseOpen ? "" : currentValue.replace(/^\/(?:skill:?)?/, "").toLowerCase();
+  const matchingSkills = skills.filter((skill) =>
+    `${skill.name} ${skill.description}`.toLowerCase().includes(skillQuery),
+  );
+  const skillsOpen = inputFocused && (skillBrowseOpen || skillToken) && !skillsDismissed && !disabled && !loading;
+  const activeSkillIndex = Math.min(skillIndex, Math.max(0, matchingSkills.length - 1));
+  useEffect(() => {
+    setSkillBrowseOpen(false);
+    setSkillIndex(0);
+    setSkillsDismissed(false);
+  }, [currentValue]);
+  useEffect(() => {
+    if (skillsOpen) document.getElementById(`${skillListId}-${activeSkillIndex}`)?.scrollIntoView({ block: "nearest" });
+  }, [skillsOpen, activeSkillIndex, skillListId]);
   const currentModelValue = model ?? internalModel;
   const currentModeValue = mode ?? internalMode;
   const currentModel = models.find(
@@ -187,6 +212,13 @@ export function PromptInput({
     onValueChange?.(next);
   };
 
+  const chooseSkill = (name: string) => {
+    setValue(`/skill:${name} ${skillBrowseOpen && !skillToken ? currentValue : ""}`);
+    setSkillBrowseOpen(false);
+    setSkillsDismissed(true);
+    textareaRef.current?.focus({ preventScroll: true });
+  };
+
   const setModel = (next: string) => {
     if (model === undefined) setInternalModel(next);
     onModelChange?.(next);
@@ -210,6 +242,24 @@ export function PromptInput({
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     onKeyDown?.(event);
+    if (event.defaultPrevented || event.nativeEvent.isComposing) return;
+    if (skillsOpen) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSkillsDismissed(true);
+        return;
+      }
+      if (matchingSkills.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+        event.preventDefault();
+        setSkillIndex((activeSkillIndex + (event.key === "ArrowDown" ? 1 : -1) + matchingSkills.length) % matchingSkills.length);
+        return;
+      }
+      if (matchingSkills.length && !event.shiftKey && (event.key === "Enter" || event.key === "Tab")) {
+        event.preventDefault();
+        chooseSkill(matchingSkills[activeSkillIndex]!.name);
+        return;
+      }
+    }
     if (
       event.defaultPrevented ||
       event.key !== "Enter" ||
@@ -231,6 +281,38 @@ export function PromptInput({
         className,
       )}
     >
+      {skillsOpen && (
+        <div onMouseDown={(event) => event.preventDefault()} className="absolute inset-x-0 bottom-full z-50 mb-2 overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-lg">
+          <div className="flex justify-between border-b px-3 py-2 text-xs text-muted-foreground">
+            <span>Skills · {matchingSkills.length}</span>
+            <span>↑↓ 选择 · Enter / Tab 补全 · Esc 关闭</span>
+          </div>
+          <div id={skillListId} role="listbox" aria-label="选择 skill" className="max-h-64 overflow-y-auto p-1">
+            {matchingSkills.length ? matchingSkills.map((skill, index) => (
+              <button
+                key={skill.name}
+                id={`${skillListId}-${index}`}
+                type="button"
+                role="option"
+                aria-selected={index === activeSkillIndex}
+                tabIndex={-1}
+                title={skill.filePath}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => setSkillIndex(index)}
+                onClick={() => chooseSkill(skill.name)}
+                className={cn("block w-full rounded-lg px-3 py-2 text-left", index === activeSkillIndex && "bg-accent text-accent-foreground")}
+              >
+                <div className="text-sm font-medium">/skill:{skill.name}</div>
+                <div className={cn("line-clamp-2 text-xs", index === activeSkillIndex ? "text-accent-foreground/85" : "text-muted-foreground")}>{skill.description}</div>
+              </button>
+            )) : <div className="px-3 py-4 text-sm text-muted-foreground">{skills.length ? "没有匹配的 skill" : "未发现可用的 skill"}</div>}
+          </div>
+          {skillDiagnostics.length > 0 && <details className="border-t px-3 py-2 text-xs text-muted-foreground">
+            <summary className="cursor-pointer">{skillDiagnostics.length} 条加载提示</summary>
+            {skillDiagnostics.map((diagnostic, index) => <p key={index} className="mt-2 break-all">{diagnostic.message}{diagnostic.path ? ` (${diagnostic.path})` : ""}</p>)}
+          </details>}
+        </div>
+      )}
       <div
         ref={measurementRef}
         aria-hidden="true"
@@ -246,12 +328,23 @@ export function PromptInput({
         aria-label={ariaLabel}
         rows={minRows}
         {...textareaProps}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={skillsOpen}
+        aria-controls={skillsOpen ? skillListId : undefined}
+        aria-activedescendant={skillsOpen && matchingSkills.length ? `${skillListId}-${activeSkillIndex}` : undefined}
+        onFocus={(event) => { setInputFocused(true); textareaProps.onFocus?.(event); }}
+        onBlur={(event) => { setInputFocused(false); textareaProps.onBlur?.(event); }}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={handleKeyDown}
         className="scrollbar-hide block w-full resize-none overflow-y-auto bg-transparent px-2 pt-1.5 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/55"
       />
 
       <div className="mt-1 flex min-h-8 flex-wrap items-center gap-1">
+        <Button type="button" variant="ghost" size="icon" aria-label="选择 skill" title="选择 skill（/）" disabled={disabled || loading}
+          onClick={() => { setSkillBrowseOpen(true); setSkillsDismissed(false); textareaRef.current?.focus({ preventScroll: true }); }}>
+          <Puzzle className="size-4" />
+        </Button>
         {actions.length ? (
           <MorphPopover open={actionsOpen} onOpenChange={setActionsOpen}>
             <MorphPopoverTrigger>

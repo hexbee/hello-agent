@@ -138,6 +138,8 @@ export type AgentSnapshot = {
   contextUsage?: ContextUsage | null;
   thinkingLevel?: ThinkingLevel;
   thinkingLevels?: ThinkingLevel[];
+  skills?: Array<{ name: string; description: string; filePath: string }>;
+  skillDiagnostics?: Array<{ type: string; message: string; path?: string }>;
   /** User messages with real JSONL entry ids — fork selector source (§5.1 session.fork). */
   forkCandidates: Array<{ entryId: string; text: string }>;
 };

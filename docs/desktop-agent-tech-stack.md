@@ -1,3 +1,5 @@
+> 更新：Skills 已启用官方全局/项目路径发现与输入框 `/skill:name` 选择。下文 v0.1 的 skills 禁用/禁止扫描条款已被此实现取代；当前行为与验证见 [skills.md](skills.md)。Extensions、凭证与会话隔离继续保留。
+
 ---
 title: "桌面 Agent 技术选型与实施边界"
 description: "Hello Agent v0.1 的总体架构、进程模型、安全边界、运行时契约与实施规格。"
