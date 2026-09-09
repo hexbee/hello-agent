@@ -79,6 +79,7 @@ export interface PromptInputProps extends Omit<
   onModeChange?: (mode: string) => void;
   onSubmit?: (value: string, model?: string) => void | Promise<void>;
   loading?: boolean;
+  submitDisabled?: boolean;
   onStop?: () => void;
   minRows?: number;
   maxRows?: number;
@@ -128,6 +129,7 @@ export function PromptInput({
   onModeChange,
   onSubmit,
   loading = false,
+  submitDisabled = false,
   onStop,
   minRows = 2,
   maxRows = 8,
@@ -179,7 +181,7 @@ export function PromptInput({
     (option) => option.value === currentModelValue,
   );
   const currentMode = modes.find((option) => option.value === currentModeValue);
-  const canSubmit = Boolean(currentValue.trim()) && !disabled && !loading;
+  const canSubmit = Boolean(currentValue.trim()) && !disabled && !loading && !submitDisabled;
 
   const resizeTextarea = useCallback(() => {
     const textarea = textareaRef.current;
@@ -233,7 +235,7 @@ export function PromptInput({
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     const prompt = currentValue.trim();
-    if (!prompt || disabled || loading) return;
+    if (!prompt || disabled || loading || submitDisabled) return;
 
     onSubmit?.(prompt, currentModelValue);
     if (value === undefined) setInternalValue("");

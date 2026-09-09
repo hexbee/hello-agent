@@ -267,8 +267,11 @@ export class PiAdapter {
   /** Resolves after preflight acceptance; full run continues in background events.
    * 注意：pi 的 session.prompt() 要等整轮 run 结束才 resolve，preflightResult
    * 只是旁路回调——绝不能 await 它，否则 renderer 的用户气泡会被拖到回复之后。 */
-  async prompt(text: string): Promise<{ accepted: boolean }> {
+  async prompt(text: string, expectedSessionId?: string): Promise<{ accepted: boolean }> {
     await this.modelSwitch;
+    if (expectedSessionId !== undefined && expectedSessionId !== this.sessionId) {
+      throw new Error("not_found: 对话已切换，消息未发送");
+    }
     const session = this.requireSession();
     return new Promise<{ accepted: boolean }>((resolve) => {
       let settled = false;

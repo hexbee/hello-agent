@@ -333,7 +333,7 @@ export function registerIpc(opts: {
       requireTrusted("restricted");
       const v = validateAgentPrompt(input);
       if (!v.ok) return v;
-      return ok(await adapter().prompt(v.data.text));
+      return ok(await adapter().prompt(v.data.text, v.data.sessionId));
     });
   });
 

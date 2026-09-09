@@ -119,8 +119,10 @@ export const validateSessionDelete = objectValidator<SessionDeleteInput>({
 
 export interface AgentPromptInput {
   text: string;
+  sessionId: string;
 }
 export const validateAgentPrompt = objectValidator<AgentPromptInput>({
+  sessionId: (v) => str(v) && v.length > 0 && v.length <= 256,
   text: (v) => str(v) && v.length > 0 && v.length <= 100_000,
 });
 

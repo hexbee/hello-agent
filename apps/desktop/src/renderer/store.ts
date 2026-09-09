@@ -5,6 +5,7 @@ import type { AgentEvent, AgentSnapshot, SafePreview, ThinkingLevel } from "@hel
 import type { ProjectSessions } from "../preload/index";
 import { useSyncExternalStore } from "react";
 import { api, unwrap } from "./api";
+import { conversationKey, loadConversationDrafts, persistConversationDrafts, type ConversationDraft, type ConversationDrafts } from "./lib/conversation-drafts";
 
 export type TrustLevel = "untrusted" | "restricted" | "trusted";
 
@@ -106,6 +107,7 @@ export type StoreState = {
   banner: { kind: "error" | "info"; text: string } | null;
   /** 设置页（含 Provider 凭据配置）弹层。 */
   settingsOpen: boolean;
+  drafts: ConversationDrafts;
 };
 
 // ── thinking 耗时持久化（localStorage）─────────────────────────────────
@@ -165,10 +167,11 @@ const initialState: StoreState = {
   optimisticSessions: [],
   banner: null,
   settingsOpen: false,
+  drafts: {},
 };
 
-class Store {
-  private state: StoreState = initialState;
+export class Store {
+  private state: StoreState = { ...initialState, drafts: loadConversationDrafts() };
   private modelSelectionVersion = 0;
   private listeners = new Set<() => void>();
   private lastSequence = 0;
@@ -253,7 +256,7 @@ class Store {
     } finally {
       this.lastSequence = 0;
       this.seqStarted = false;
-      this.state = { ...initialState };
+      this.state = { ...initialState, drafts: this.state.drafts };
       for (const l of this.listeners) l();
       // 项目记录在 Main 持久化，重拉以便 gate 仍可展示项目树入口。
       await this.refreshProjectSessions();
@@ -841,49 +844,84 @@ class Store {
 
   // ── actions ────────────────────────────────────────────────────────────────
 
-  async prompt(text: string): Promise<void> {
+  draftKey(): string {
+    return conversationKey(this.state.cwd, this.state.session?.id);
+  }
+
+  private saveDraft(key: string, draft: ConversationDraft): void {
+    const drafts = { ...this.state.drafts };
+    if (!draft.text && !draft.pending) delete drafts[key];
+    else drafts[key] = draft;
+    persistConversationDrafts(drafts);
+    this.set({ drafts });
+  }
+
+  setDraft(text: string): void {
+    const key = this.draftKey();
+    this.saveDraft(key, { ...this.state.drafts[key], text });
+  }
+
+  editFailedSend(): void {
+    const key = this.draftKey();
+    const draft = this.state.drafts[key];
+    if (!draft?.pending || draft.pending.status !== "failed") return;
+    // Preserve anything typed while the previous request was in flight.
+    this.saveDraft(key, { text: [draft.text, draft.pending.text].filter(Boolean).join("\n\n") });
+  }
+
+  dismissFailedSend(): void {
+    const key = this.draftKey();
+    const draft = this.state.drafts[key];
+    if (!draft?.pending || draft.pending.status === "sending") return;
+    this.saveDraft(key, { text: draft.text });
+  }
+
+  async retryPrompt(): Promise<void> {
+    const pending = this.state.drafts[this.draftKey()]?.pending;
+    if (pending?.status === "failed") await this.prompt(pending.text, pending.id);
+  }
+
+  async prompt(text: string, retryId?: string): Promise<void> {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    const key = this.draftKey();
+    const draft = this.state.drafts[key] ?? { text: "" };
+    const sessionId = this.state.session?.id;
+    if (!trimmed || !sessionId || this.state.agentState === "running" ||
+      (draft.pending && !(retryId === draft.pending.id && draft.pending.status === "failed"))) return;
+    const messageId = `local:u:${crypto.randomUUID()}`;
+    // Lock synchronously before invoking IPC; rapid Enter/click/retry cannot submit twice.
+    this.saveDraft(key, { text: retryId || draft.text.trim() !== trimmed ? draft.text : "", pending: {
+      id: messageId, text: !retryId && draft.text.trim() === trimmed ? draft.text : text, status: "sending",
+    } });
     if (!this.state.pendingModel) this.set({ modelNotice: null });
-    const messageId = `local:u:${Date.now()}`;
-    // 乐观追加：main 侧 prompt IPC 只等 preflight 就返回，但事件与 IPC
-    // 返回的到达顺序不保证——先画气泡再发请求，失败时回滚。
     this.set({
-      entries: [
-        ...this.state.entries,
-        {
-          kind: "message",
-          messageId,
-          role: "user",
-          text: trimmed,
-          thinking: null,
-          streaming: false,
-        },
-      ],
+      entries: [...this.state.entries, {
+        kind: "message", messageId, role: "user", text: trimmed, thinking: null, streaming: false,
+      }],
       banner: null,
     });
-    // 新会话立即占位侧边栏（拒绝/失败时回滚新增条目）。
     const added = this.addOptimisticSession(trimmed);
-    try {
-      const r = unwrap(await api().agent.prompt(trimmed));
-      if (!r.accepted) {
-        // preflight 拒绝（如 agent 忙）：撤回本地气泡。
-        this.set({
-          entries: this.state.entries.filter(
-            (x) => !(x.kind === "message" && x.messageId === messageId),
-          ),
-          banner: { kind: "error", text: "助手正在处理，消息未发送" },
-        });
+    const finish = (status: "accepted" | "failed" | "uncertain", error?: string) => {
+      const current = this.state.drafts[key];
+      if (current?.pending?.id !== messageId) return;
+      this.saveDraft(key, status === "accepted" ? { text: current.text } : {
+        text: current.text, pending: { ...current.pending, status, error },
+      });
+      // Late responses belong to the original conversation, never the newly selected one.
+      if (status === "failed") {
+        if (this.draftKey() === key) this.set({ entries: this.state.entries.filter(
+          (x) => !(x.kind === "message" && x.messageId === messageId),
+        ) });
         if (added) this.removeOptimisticSession(added.sessionId);
       }
-    } catch (e) {
-      this.set({
-        entries: this.state.entries.filter(
-          (x) => !(x.kind === "message" && x.messageId === messageId),
-        ),
-        banner: { kind: "error", text: String(e) },
-      });
-      if (added) this.removeOptimisticSession(added.sessionId);
+    };
+    try {
+      const r = await api().agent.prompt(trimmed, sessionId);
+      if (r.ok) finish(r.data.accepted ? "accepted" : "failed", "消息未被接收，请稍后重试。");
+      else finish(r.error.code === "internal" ? "uncertain" : "failed", r.error.message);
+    } catch {
+      // IPC rejection can occur after Main accepted the request. Never blindly retry.
+      finish("uncertain", "连接中断，无法确认消息是否已发送。请先核对对话结果。");
     }
   }
 

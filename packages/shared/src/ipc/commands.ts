@@ -112,6 +112,7 @@ export type SessionDeleteResult = { deleted: true };
 
 export interface AgentPromptRequest {
   text: string;
+  sessionId: string;
 }
 export type AgentPromptResult = { accepted: boolean };
 

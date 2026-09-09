@@ -26,8 +26,9 @@
     "probe:watchdog": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/watchdog-probe.ts",
     "probe:trust-persist": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/trust-persist-probe.ts",
     "probe:e2e-llm": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/e2e-llm-probe.ts",
-    "probe:all": "pnpm probe:isolation && pnpm probe:skills && pnpm probe:permission && pnpm probe:session-rebind && pnpm probe:session-prefs && pnpm probe:projects-order && pnpm probe:dispose-rebuild && pnpm probe:delta-stress && pnpm probe:sandbox && pnpm probe:e2e-llm && pnpm probe:watchdog && pnpm probe:trust-persist",
-    "probe:package": "bash spikes/probes/package-probe.sh"
+    "probe:all": "pnpm probe:prompt-reliability && pnpm probe:isolation && pnpm probe:skills && pnpm probe:permission && pnpm probe:session-rebind && pnpm probe:session-prefs && pnpm probe:projects-order && pnpm probe:dispose-rebuild && pnpm probe:delta-stress && pnpm probe:sandbox && pnpm probe:e2e-llm && pnpm probe:watchdog && pnpm probe:trust-persist",
+    "probe:package": "bash spikes/probes/package-probe.sh",
+    "probe:prompt-reliability": "cd apps/desktop && pnpm exec tsx ../../spikes/probes/prompt-reliability-probe.ts"
   },
   "packageManager": "pnpm@11.21.0"
 }

@@ -69,6 +69,14 @@ async function main(): Promise<void> {
     permissions.bindCount > bindAfterCreate,
   );
   r.check("newSession changed sessionId", adapter.sessionId !== firstSession);
+  let stalePromptRejected = false;
+  try {
+    await adapter.prompt("must never reach the new conversation", firstSession);
+  } catch (error) {
+    stalePromptRejected = error instanceof Error && error.message.startsWith("not_found:");
+  }
+  r.check("late prompt rejects stale session ownership before invoking model", stalePromptRejected);
+
 
   await adapter.newSession(); // make a second session
   await seed(adapter);

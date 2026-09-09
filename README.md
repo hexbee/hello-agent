@@ -43,4 +43,5 @@ Renderer：`react@19.2.8` · `tailwindcss@4.3.3` · `markstream-react@2.0.3`（b
   签名/notarization 待开发者证书
 - ✅ 错误恢复闭环（§4.5）：PiAdapter 内置 watchdog（卡死 → failed + abort）、
   `agent.rebuild` 命令与 UI 恢复栏（重建 + 会话恢复）；`pnpm probe:watchdog` 卡死注入 9/9
+- ✅ [发送可靠性与草稿](docs/prompt-reliability.md)：明确发送失败保留原文并支持重试，按对话保存草稿；发送结果不明时禁止盲目重发
 - ⏳ 待办：签名/notarization（待证书）、OAuth 流程、审计查看界面

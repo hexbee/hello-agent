@@ -42,6 +42,9 @@ export function Composer({ autoFocus = false }: { autoFocus?: boolean }) {
     group: m.provider || undefined,
   }));
 
+  const draftKey = store.draftKey();
+  const draft = s.drafts[draftKey] ?? { text: "" };
+  const pending = draft.pending;
   const running = s.agentState === "running";
   // 受限工作区没有写权限可放行，「完全访问」无意义 → 不展示模式按钮。
   const showModes = s.trust === "trusted";
@@ -49,7 +52,27 @@ export function Composer({ autoFocus = false }: { autoFocus?: boolean }) {
   return (
     <div className="py-3">
       <ModelSwitchNotice />
+      {pending && (
+        <div role="status" className="mb-2 rounded-xl border border-border bg-panel p-3 text-sm">
+          <p className="font-medium">{pending.status === "sending" ? "正在发送…" : pending.status === "failed" ? "消息未发送" : "发送结果待确认"}</p>
+          {pending.status !== "sending" && <>
+            <p className="mt-1 text-muted-foreground">{pending.error}</p>
+            <pre className="my-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-sans">{pending.text}</pre>
+            <div className="flex gap-3">
+              {pending.status === "failed" && <>
+                <button type="button" className="text-accent disabled:opacity-50" disabled={running || s.trust === "untrusted"} onClick={() => void store.retryPrompt()}>重试发送</button>
+                <button type="button" onClick={() => store.editFailedSend()}>放回输入框</button>
+              </>}
+              <button type="button" onClick={() => store.dismissFailedSend()}>{pending.status === "uncertain" ? "已核对，关闭提示" : "丢弃"}</button>
+            </div>
+          </>}
+        </div>
+      )}
       <PromptInput
+        key={draftKey}
+        value={draft.text}
+        onValueChange={(text) => store.setDraft(text)}
+        submitDisabled={!!pending || !s.session}
         placeholder={
           running
             ? "正在处理…"

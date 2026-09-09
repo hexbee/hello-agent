@@ -134,8 +134,8 @@ const api = {
       invoke("session.delete", { path } satisfies SessionDeleteRequest),
   },
   agent: {
-    prompt: (text: string): Promise<Result<{ accepted: boolean }>> =>
-      invoke("agent.prompt", { text }),
+    prompt: (text: string, sessionId: string): Promise<Result<{ accepted: boolean }>> =>
+      invoke("agent.prompt", { text, sessionId }),
     abort: (): Promise<Result<{ aborted: true }>> => invoke("agent.abort"),
     snapshot: (): Promise<Result<AgentSnapshot>> => invoke("agent.snapshot"),
     rebuild: (): Promise<Result<AgentRebuildResult>> => invoke("agent.rebuild"),
