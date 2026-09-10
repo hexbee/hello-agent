@@ -23,9 +23,11 @@ import type {
   ThinkingConfig,
   ContextUsage,
   ModelsSelectResult,
+  PromptQueueSnapshot,
 } from "@hello-agent/shared";
 import { realpathSync, statSync } from "node:fs";
-import { basename, isAbsolute, resolve } from "node:path";
+import { basename, isAbsolute, resolve, join } from "node:path";
+import { PromptQueueStore } from "./prompt-queue.js";
 import { DeltaBatcher } from "./delta-batcher.js";
 import {
   canonicalize,
@@ -61,6 +63,11 @@ export class PiAdapter {
   private lastError: string | undefined;
   /** §4.5 watchdog: armed while running, reset on every pi event. */
   private watchdogTimer: NodeJS.Timeout | undefined;
+  private readonly promptQueues: PromptQueueStore;
+  private queueTimer: NodeJS.Timeout | undefined;
+  private queueDispatch: Promise<void> | undefined;
+  private directPrompt: Promise<{ accepted: boolean }> | undefined;
+  private queueSuspended = false;
 
   constructor(
     readonly host: AgentHost,
@@ -70,8 +77,10 @@ export class PiAdapter {
       extraExtensions?: InlineExtension[];
       /** 持久化的偏好记忆（新对话继承最后一次、切换会话恢复目录偏好）。 */
       prefs?: SessionPrefsStore;
+      promptQueues?: PromptQueueStore;
     } = {},
   ) {
+    this.promptQueues = opts.promptQueues ?? new PromptQueueStore(join(host.paths.agentDir, "prompt-queues.json"));
     this.batcher = new DeltaBatcher((events) => {
       for (const e of events) this.emit(e);
     });
@@ -86,13 +95,13 @@ export class PiAdapter {
   async create(cwdInput: string): Promise<{ cwd: string }> {
     const cwd = canonicalize(cwdInput);
     if (!cwd) throw new Error(`cannot canonicalize cwd: ${cwdInput}`);
-    this.canonicalCwd = cwd;
 
     // 捕获替换前的会话偏好（权限模式 + 模型）：目录无记忆时沿用，
     // 让「切换到全新项目」也等价于继承最后一次对话（与「新对话」一致）。
     const carried = this.currentPrefs();
 
     await this.disposeInternal({ abortFirst: false });
+    this.canonicalCwd = cwd;
 
     if (!this.modelRuntime) {
       // §8: app-owned CredentialStore (safeStorage) backs the runtime so
@@ -155,6 +164,7 @@ export class PiAdapter {
       abortHandler: () => void this.permissions.cancelAll("agent abort"),
     });
     this.unsubscribe = session.subscribe((event) => this.onPiEvent(event));
+    this.queueSuspended = false;
   }
 
   async dispose(): Promise<void> {
@@ -162,6 +172,7 @@ export class PiAdapter {
   }
 
   private async disposeInternal(opts: { abortFirst: boolean }): Promise<void> {
+    await this.suspendQueue();
     this.pendingModel = null;
     await this.modelSwitch;
     if (opts.abortFirst && this.state === "running") {
@@ -240,6 +251,7 @@ export class PiAdapter {
   private async onWatchdogFired(): Promise<void> {
     if (this.state !== "running") return;
     const ms = this.host.watchdogTimeoutMs ?? 0;
+    await this.suspendQueue();
     this.state = "failed";
     this.lastError = `watchdog: no agent activity for ${ms}ms`;
     this.emit(
@@ -268,6 +280,19 @@ export class PiAdapter {
    * 注意：pi 的 session.prompt() 要等整轮 run 结束才 resolve，preflightResult
    * 只是旁路回调——绝不能 await 它，否则 renderer 的用户气泡会被拖到回复之后。 */
   async prompt(text: string, expectedSessionId?: string): Promise<{ accepted: boolean }> {
+    if (this.queueSuspended || this.directPrompt || this.queueDispatch || this.queueSnapshot().items.length) {
+      throw new Error("busy: 请先处理待发送队列");
+    }
+    const operation = this.executePrompt(text, expectedSessionId);
+    this.directPrompt = operation;
+    try { return await operation; }
+    finally {
+      if (this.directPrompt === operation) this.directPrompt = undefined;
+      this.scheduleQueue();
+    }
+  }
+
+  private async executePrompt(text: string, expectedSessionId?: string, onAccepted?: () => void): Promise<{ accepted: boolean }> {
     await this.modelSwitch;
     if (expectedSessionId !== undefined && expectedSessionId !== this.sessionId) {
       throw new Error("not_found: 对话已切换，消息未发送");
@@ -278,6 +303,7 @@ export class PiAdapter {
       const finish = (accepted: boolean) => {
         if (!settled) {
           settled = true;
+          if (accepted) onAccepted?.();
           resolve({ accepted });
         }
       };
@@ -294,10 +320,130 @@ export class PiAdapter {
   }
 
   async abort(): Promise<void> {
-    const session = this.requireSession();
-    this.permissions.cancelAll("user abort");
-    await session.abort();
-    this.state = "aborted";
+    await this.suspendQueue();
+    try {
+      const session = this.requireSession();
+      this.permissions.cancelAll("user abort");
+      await session.abort();
+      this.state = "aborted";
+      this.emit(this.mk("agent.state", { state: "aborted" }));
+    } finally { this.queueSuspended = false; }
+  }
+
+  // Follow-ups are dispatched through normal prompt() preflight only after
+  // agent_settled, so each item gets its own turn and deferred model switch.
+  private queueKey(): string {
+    return JSON.stringify([this.canonicalCwd ?? this.host.getCwd(), this.sessionId]);
+  }
+
+  queueSnapshot(): PromptQueueSnapshot {
+    return this.promptQueues.snapshot(this.queueKey());
+  }
+
+  private emitQueue(): PromptQueueSnapshot {
+    const queue = this.queueSnapshot();
+    this.emit(this.mk("queue.updated", { queue }));
+    return queue;
+  }
+
+  private checkQueueSession(sessionId: string): void {
+    this.requireSession();
+    if (this.sessionId !== sessionId) throw new Error("not_found: 对话已切换");
+    if (this.queueSuspended) throw new Error("busy: 正在停止或切换对话，请稍后重试");
+  }
+
+  addQueuedPrompt(sessionId: string, id: string, text: string): PromptQueueSnapshot {
+    this.checkQueueSession(sessionId);
+    this.promptQueues.add(this.queueKey(), id, text, this.state !== "failed" && this.state !== "aborted");
+    const queue = this.emitQueue();
+    this.scheduleQueue();
+    return queue;
+  }
+
+  editQueuedPrompt(sessionId: string, id: string, text: string): PromptQueueSnapshot {
+    this.checkQueueSession(sessionId);
+    this.promptQueues.edit(this.queueKey(), id, text);
+    return this.emitQueue();
+  }
+
+  removeQueuedPrompt(sessionId: string, id: string): PromptQueueSnapshot {
+    this.checkQueueSession(sessionId);
+    this.promptQueues.remove(this.queueKey(), id);
+    return this.emitQueue();
+  }
+
+  controlQueue(sessionId: string, paused: boolean): PromptQueueSnapshot {
+    this.checkQueueSession(sessionId);
+    if (paused) this.promptQueues.pause(this.queueKey());
+    else this.promptQueues.resume(this.queueKey());
+    const queue = this.emitQueue();
+    if (!paused) {
+      // An explicit resume can retry a preflight failure or continue after Stop.
+      if (this.state === "aborted" || this.state === "failed") this.state = "idle";
+      this.scheduleQueue();
+    }
+    return queue;
+  }
+
+  private async suspendQueue(): Promise<void> {
+    this.queueSuspended = true;
+    if (this.queueTimer) clearTimeout(this.queueTimer);
+    this.queueTimer = undefined;
+    if (this.sessionId) {
+      try {
+        this.promptQueues.pause(this.queueKey());
+        this.emitQueue();
+      } catch (error) {
+        // Storage failure must never prevent stopping the running agent.
+        console.error("[prompt-queue] pause persistence failed", error);
+      }
+    }
+    // Wait for preflight before aborting: otherwise an accepted prompt could
+    // start after Stop or after a session replacement has already completed.
+    await this.queueDispatch?.catch(() => undefined);
+    await this.directPrompt?.catch(() => undefined);
+  }
+
+  private scheduleQueue(): void {
+    if (this.queueSuspended || this.queueTimer || !this.session) return;
+    const queue = this.queueSnapshot();
+    if (queue.paused || !queue.items.length) return;
+    this.queueTimer = setTimeout(() => {
+      this.queueTimer = undefined;
+      if (this.queueDispatch || this.directPrompt || this.queueSuspended) return;
+      const operation = this.dispatchNext();
+      this.queueDispatch = operation;
+      void operation.catch((error) => {
+        this.queueSuspended = true;
+        this.state = "failed";
+        this.emit(this.mk("agent.state", { state: "failed" }));
+        console.error("[prompt-queue] dispatch failed", error);
+        this.emit(this.mk("agent.failed", { kind: "runtime", message: "待发送队列未能保存，已暂停。请重建助手后检查队列。" }));
+      }).finally(() => {
+        if (this.queueDispatch === operation) this.queueDispatch = undefined;
+        if (this.state === "idle" && this.session?.isIdle) this.scheduleQueue();
+      });
+    }, 0);
+  }
+
+  private async dispatchNext(): Promise<void> {
+    const sessionId = this.sessionId;
+    await this.modelSwitch;
+    if (this.queueSuspended || this.sessionId !== sessionId || this.state !== "idle" || !this.session?.isIdle) return;
+    const key = this.queueKey();
+    const item = this.promptQueues.claim(key);
+    if (!item) return;
+    this.emitQueue();
+    try {
+      const result = await this.executePrompt(item.text.trim(), sessionId, () => {
+        this.emit(this.mk("queue.dispatched", { id: item.id, text: item.text.trim() }));
+      });
+      if (result.accepted) this.promptQueues.complete(key, item.id);
+      else this.promptQueues.fail(key, item.id, "消息未被接收，请检查模型和凭据后继续队列。");
+    } catch {
+      this.promptQueues.fail(key, item.id, "无法确认这条消息是否已发送，请先核对对话结果。", true);
+    }
+    if (this.queueKey() === key) this.emitQueue();
   }
 
   getState(): AgentState {
@@ -431,6 +577,7 @@ export class PiAdapter {
 
   /** §7.2 / §4.1: cancel approvals BEFORE replacing the live session. */
   private async replaceSession(replace: () => Promise<unknown>): Promise<void> {
+    await this.suspendQueue();
     this.pendingModel = null;
     await this.modelSwitch;
     this.permissions.cancelAll("session replacement");
@@ -440,9 +587,14 @@ export class PiAdapter {
     } catch {
       /* timeout fallback */
     }
-    await replace();
-    this.activeTools.clear();
-    await this.bindCurrentSession();
+    try {
+      await replace();
+      this.activeTools.clear();
+      await this.bindCurrentSession();
+    } finally {
+      // A failed fork/switch must not permanently disable the old conversation.
+      if (this.session) this.queueSuspended = false;
+    }
   }
 
   // ── models & auth ──────────────────────────────────────────────────────────
@@ -867,19 +1019,23 @@ export class PiAdapter {
         // Pi can retry or compact after agent_end; only agent_settled is final.
         break;
       case "agent_settled": {
+        const settledSession = this.session;
         const complete = async () => {
           await this.applyPendingModel();
+          if (this.session !== settledSession) return;
           this.emitContextUsage();
           this.disarmWatchdog();
           this.state = this.lastError ? "failed" : "idle";
           if (this.lastError) {
+            this.promptQueues.pause(this.queueKey());
+            this.emitQueue();
             this.emit(this.mk("agent.failed", { kind: "llm", message: this.lastError }));
           }
           this.emit(this.mk("agent.state", { state: this.state }));
           // 首轮对话结束后自动起标题（pi 不落盘无名会话，此时文件已写入）。
           void this.autoTitleSession();
         };
-        this.modelSwitch = complete().finally(() => { this.modelSwitch = undefined; });
+        this.modelSwitch = complete().finally(() => { this.modelSwitch = undefined; this.scheduleQueue(); });
         break;
       }
       case "auto_retry_start": {
@@ -902,7 +1058,7 @@ export class PiAdapter {
         break;
       }
       default:
-        // queue_update / steer / followUp etc.: recorded in snapshot only. §6.1
+        // Native steering/follow-up queues are unused; the app queue owns pending text.
         break;
     }
   }
@@ -1010,6 +1166,7 @@ export class PiAdapter {
         name: this.session?.sessionName,
       },
       agentState: this.state,
+      promptQueue: this.queueSnapshot(),
       messages,
       tools,
       activeToolPreviews: [...this.activeTools].map(([toolCallId, t]) => ({

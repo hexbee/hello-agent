@@ -1,7 +1,7 @@
 // Runtime validators for every Renderer → Main command — §6.3.
 // Hand-written, dependency-free. TypeScript types are NOT runtime validation.
 
-import { THINKING_LEVELS, type Result, type ThinkingSetRequest } from "./commands.js";
+import { THINKING_LEVELS, type Result, type ThinkingSetRequest, type QueueAddRequest, type QueueEditRequest, type QueueRemoveRequest, type QueueControlRequest } from "./commands.js";
 
 type Validator<T> = (input: unknown) => Result<T>;
 
@@ -125,6 +125,14 @@ export const validateAgentPrompt = objectValidator<AgentPromptInput>({
   sessionId: (v) => str(v) && v.length > 0 && v.length <= 256,
   text: (v) => str(v) && v.length > 0 && v.length <= 100_000,
 });
+
+const queueSession = (v: unknown) => str(v) && v.length > 0 && v.length <= 256;
+const queueId = (v: unknown) => str(v) && /^[a-zA-Z0-9:_-]{1,128}$/.test(v);
+const queueText = (v: unknown) => str(v) && v.trim().length > 0 && v.length <= 100_000;
+export const validateQueueAdd = objectValidator<QueueAddRequest>({ sessionId: queueSession, id: queueId, text: queueText });
+export const validateQueueEdit = objectValidator<QueueEditRequest>({ sessionId: queueSession, id: queueId, text: queueText });
+export const validateQueueRemove = objectValidator<QueueRemoveRequest>({ sessionId: queueSession, id: queueId });
+export const validateQueueControl = objectValidator<QueueControlRequest>({ sessionId: queueSession, paused: (v) => typeof v === "boolean" });
 
 // ── permissions ──────────────────────────────────────────────────────────────
 

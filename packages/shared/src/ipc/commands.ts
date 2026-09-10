@@ -118,6 +118,20 @@ export type AgentPromptResult = { accepted: boolean };
 
 export type AgentAbortResult = { aborted: true };
 
+export const MAX_QUEUED_PROMPTS = 20;
+export type QueuedPrompt = {
+  id: string;
+  text: string;
+  createdAt: number;
+  status: "queued" | "sending" | "failed" | "uncertain";
+  error?: string;
+};
+export type PromptQueueSnapshot = { revision: number; paused: boolean; items: QueuedPrompt[] };
+export type QueueAddRequest = { sessionId: string; id: string; text: string };
+export type QueueEditRequest = QueueAddRequest;
+export type QueueRemoveRequest = { sessionId: string; id: string };
+export type QueueControlRequest = { sessionId: string; paused: boolean };
+
 export type AgentSnapshotResult = AgentSnapshot;
 
 /** §4.5 explicit runtime rebuild (dispose → same-cwd recreate → restore latest session). */

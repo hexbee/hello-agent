@@ -16,6 +16,13 @@
         ]
       },
       {
+        "group": "对话使用",
+        "pages": [
+          "prompt-reliability",
+          "prompt-queue"
+        ]
+      },
+      {
         "group": "架构与决策",
         "pages": [
           "desktop-agent-tech-stack",

@@ -11,6 +11,7 @@ import type { AgentHost } from "../../apps/desktop/src/main/agent/host.js";
 import type { AgentEvent } from "@hello-agent/shared";
 import { exitOn, Reporter } from "./harness.js";
 
+process.env.PI_OFFLINE = "1"; // Synthetic stream: model-catalog network work is unrelated to this measurement.
 const r = new Reporter();
 await r.run("delta-stress", () => main());
 exitOn(r);
@@ -33,7 +34,8 @@ async function main(): Promise<void> {
 
   // Collect every event the host would push over IPC.
   const received: AgentEvent[] = [];
-  let peakHeapBefore = process.memoryUsage().heapUsed;
+  let peakHeap = 0;
+  let measuringStream = false;
 
   const host: AgentHost = {
     paths,
@@ -41,9 +43,9 @@ async function main(): Promise<void> {
     getTrust: () => "trusted",
     emit: (e) => {
       received.push(e);
-      if (received.length % 1000 === 0) {
+      if (measuringStream && received.length % 1000 === 0) {
         const h = process.memoryUsage().heapUsed;
-        if (h > peakHeapBefore) peakHeapBefore = h;
+        if (h > peakHeap) peakHeap = h;
       }
     },
     getEnvKey: () => undefined,
@@ -62,6 +64,11 @@ async function main(): Promise<void> {
 
   const COUNT = 5000;
   const SIZE = 40; // bytes per delta
+  // Measure allocations during the stream, excluding SDK initialization.
+  // Peak minus END heap measures GC reclamation, not memory growth.
+  const heapBefore = process.memoryUsage().heapUsed;
+  peakHeap = heapBefore;
+  measuringStream = true;
   const t0 = Date.now();
 
   adapter.injectDevDeltas(COUNT, SIZE);
@@ -105,11 +112,11 @@ async function main(): Promise<void> {
 
   // Heap did not grow linearly with total bytes queued+flushed (≈COUNT*SIZE).
   const heapAfter = process.memoryUsage().heapUsed;
-  const growthMb = (peakHeapBefore - heapAfter) / 1024 / 1024;
+  const growthMb = (Math.max(peakHeap, heapAfter) - heapBefore) / 1024 / 1024;
   r.check(
     "heap bounded (growth < 15MB for ~200KB payload stream)",
     growthMb < 15,
-    `peak-vs-end ${growthMb.toFixed(2)}MB`,
+    `stream peak growth ${growthMb.toFixed(2)}MB`,
   );
 
   console.log(

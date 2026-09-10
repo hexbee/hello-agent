@@ -1,7 +1,7 @@
 // Renderer state store — applies the §6.1 product event stream on top of
 // snapshot replay, with sequence-gap detection → agent.snapshot recovery.
 
-import type { AgentEvent, AgentSnapshot, SafePreview, ThinkingLevel } from "@hello-agent/shared";
+import type { AgentEvent, AgentSnapshot, SafePreview, ThinkingLevel, PromptQueueSnapshot } from "@hello-agent/shared";
 import type { ProjectSessions } from "../preload/index";
 import { useSyncExternalStore } from "react";
 import { api, unwrap } from "./api";
@@ -108,6 +108,7 @@ export type StoreState = {
   /** 设置页（含 Provider 凭据配置）弹层。 */
   settingsOpen: boolean;
   drafts: ConversationDrafts;
+  promptQueue: PromptQueueSnapshot;
 };
 
 // ── thinking 耗时持久化（localStorage）─────────────────────────────────
@@ -168,11 +169,13 @@ const initialState: StoreState = {
   banner: null,
   settingsOpen: false,
   drafts: {},
+  promptQueue: { revision: 0, paused: false, items: [] },
 };
 
 export class Store {
   private state: StoreState = { ...initialState, drafts: loadConversationDrafts() };
   private modelSelectionVersion = 0;
+  private queueDispatchIds = new Set<string>();
   private listeners = new Set<() => void>();
   private lastSequence = 0;
   private seqStarted = false;
@@ -600,6 +603,9 @@ export class Store {
     this.set({
       entries,
       pendingApprovals: snap.pendingApprovals,
+      agentState: snap.agentState,
+      promptQueue: sameSession && this.state.promptQueue.revision > (snap.promptQueue?.revision ?? 0)
+        ? this.state.promptQueue : snap.promptQueue ?? { revision: 0, paused: false, items: [] },
       modelNotice: this.state.session?.id !== snap.session.id ? null
         : this.state.modelNotice?.phase === "queued" && !snap.pendingModel && snap.selectedModel === this.state.modelNotice.target
           ? { ...this.state.modelNotice, phase: "switched" }
@@ -640,7 +646,9 @@ export class Store {
         console.log("[events] 序列间隙，丢弃并恢复:", e.type, e.sequence);
         void this.refreshSnapshot().catch(() => undefined);
         void this.refreshSessions().catch(() => undefined);
-        return;
+        // Queue mutations are full snapshots; dispatch IDs are idempotent. Do
+        // not lose a queued user message when its event overtakes batched deltas.
+        if (e.type !== "queue.dispatched" && e.type !== "queue.updated") return;
       }
       this.lastSequence = e.sequence;
       this.seqStarted = true;
@@ -834,6 +842,23 @@ export class Store {
         });
         break;
       }
+      case "queue.updated":
+        this.applyPromptQueue(e.queue, e.sessionId);
+        break;
+      case "queue.dispatched": {
+        if (this.state.session?.id !== e.sessionId) break;
+        const dispatchKey = `${e.sessionId}:${e.id}`;
+        if (this.queueDispatchIds.has(dispatchKey)) break;
+        this.queueDispatchIds.add(dispatchKey);
+        const messageId = `local:u:queue:${e.id}`;
+        if (!this.state.entries.some((entry) => entry.kind === "message" && entry.messageId === messageId)) {
+          this.set({ entries: [...this.state.entries, {
+            kind: "message", messageId, role: "user", text: e.text, thinking: null, streaming: false,
+          }] });
+          this.addOptimisticSession(e.text);
+        }
+        break;
+      }
       case "context.usage":
         this.set({ contextUsage: e.usage });
         break;
@@ -878,7 +903,72 @@ export class Store {
 
   async retryPrompt(): Promise<void> {
     const pending = this.state.drafts[this.draftKey()]?.pending;
-    if (pending?.status === "failed") await this.prompt(pending.text, pending.id);
+    if (pending?.destination === "queue" && pending.status !== "sending") {
+      await this.enqueuePrompt(pending.text, pending.id);
+    } else if (pending?.status === "failed") await this.prompt(pending.text, pending.id);
+  }
+
+  async submitPrompt(text: string): Promise<void> {
+    if (this.state.agentState === "running" || this.state.promptQueue.items.length) await this.enqueuePrompt(text);
+    else await this.prompt(text);
+  }
+
+  private applyPromptQueue(queue: PromptQueueSnapshot, sessionId: string): void {
+    if (this.state.session?.id === sessionId && queue.revision >= this.state.promptQueue.revision) {
+      this.set({ promptQueue: queue });
+    }
+  }
+
+  private async enqueuePrompt(text: string, retryId?: string): Promise<void> {
+    const key = this.draftKey();
+    const sessionId = this.state.session?.id;
+    const draft = this.state.drafts[key] ?? { text: "" };
+    if (!sessionId || !text.trim() || (draft.pending &&
+      !(retryId === draft.pending.id && draft.pending.destination === "queue" && draft.pending.status !== "sending"))) return;
+    const id = retryId ?? crypto.randomUUID();
+    const original = !retryId && draft.text.trim() === text.trim() ? draft.text : text;
+    this.saveDraft(key, { text: retryId || draft.text.trim() !== text.trim() ? draft.text : "",
+      pending: { id, text: original, status: "sending", destination: "queue" } });
+    const finish = (status: "accepted" | "failed" | "uncertain", error?: string) => {
+      const current = this.state.drafts[key];
+      if (current?.pending?.id !== id) return;
+      this.saveDraft(key, status === "accepted" ? { text: current.text } : {
+        ...current, pending: { ...current.pending, status, error },
+      });
+    };
+    try {
+      const r = await api().agent.queue.add(sessionId, id, original);
+      if (r.ok) {
+        this.applyPromptQueue(r.data, sessionId);
+        finish("accepted");
+      } else finish(r.error.code === "internal" ? "uncertain" : "failed", r.error.message);
+    } catch {
+      finish("uncertain", "无法确认是否已加入队列。可点击确认入队结果，不会重复添加。");
+    }
+  }
+
+  private async changeQueue(action: (sessionId: string) => Promise<PromptQueueSnapshot>): Promise<boolean> {
+    const sessionId = this.state.session?.id;
+    if (!sessionId) return false;
+    try {
+      this.applyPromptQueue(await action(sessionId), sessionId);
+      return this.state.session?.id === sessionId;
+    } catch (error) {
+      if (this.state.session?.id === sessionId) this.set({ banner: { kind: "error", text: String(error) } });
+      return false;
+    }
+  }
+
+  editQueuedPrompt(id: string, text: string): Promise<boolean> {
+    return this.changeQueue(async (sessionId) => unwrap(await api().agent.queue.edit(sessionId, id, text)));
+  }
+
+  removeQueuedPrompt(id: string): Promise<boolean> {
+    return this.changeQueue(async (sessionId) => unwrap(await api().agent.queue.remove(sessionId, id)));
+  }
+
+  controlQueue(paused: boolean): Promise<boolean> {
+    return this.changeQueue(async (sessionId) => unwrap(await api().agent.queue.control(sessionId, paused)));
   }
 
   async prompt(text: string, retryId?: string): Promise<void> {

@@ -1,3 +1,4 @@
+import { PromptQueue } from "./PromptQueue";
 import { ModelSwitchNotice } from "./ModelSwitchNotice";
 import { ContextUsageIndicator } from "./ContextUsageIndicator";
 import type { ThinkingLevel } from "@hello-agent/shared";
@@ -45,13 +46,14 @@ export function Composer({ autoFocus = false }: { autoFocus?: boolean }) {
   const draftKey = store.draftKey();
   const draft = s.drafts[draftKey] ?? { text: "" };
   const pending = draft.pending;
-  const running = s.agentState === "running";
+  const running = s.agentState === "running" || s.promptQueue.items.some((item) => item.status === "sending");
   // 受限工作区没有写权限可放行，「完全访问」无意义 → 不展示模式按钮。
   const showModes = s.trust === "trusted";
 
   return (
     <div className="py-3">
       <ModelSwitchNotice />
+      <PromptQueue key={draftKey} />
       {pending && (
         <div role="status" className="mb-2 rounded-xl border border-border bg-panel p-3 text-sm">
           <p className="font-medium">{pending.status === "sending" ? "正在发送…" : pending.status === "failed" ? "消息未发送" : "发送结果待确认"}</p>
@@ -59,9 +61,9 @@ export function Composer({ autoFocus = false }: { autoFocus?: boolean }) {
             <p className="mt-1 text-muted-foreground">{pending.error}</p>
             <pre className="my-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-sans">{pending.text}</pre>
             <div className="flex gap-3">
-              {pending.status === "failed" && <>
-                <button type="button" className="text-accent disabled:opacity-50" disabled={running || s.trust === "untrusted"} onClick={() => void store.retryPrompt()}>重试发送</button>
-                <button type="button" onClick={() => store.editFailedSend()}>放回输入框</button>
+              {(pending.status === "failed" || pending.destination === "queue") && <>
+                <button type="button" className="text-accent disabled:opacity-50" disabled={(running && pending.destination !== "queue") || s.trust === "untrusted"} onClick={() => void store.retryPrompt()}>{pending.destination === "queue" && pending.status === "uncertain" ? "确认入队结果" : "重试发送"}</button>
+                {pending.status === "failed" && <button type="button" onClick={() => store.editFailedSend()}>放回输入框</button>}
               </>}
               <button type="button" onClick={() => store.dismissFailedSend()}>{pending.status === "uncertain" ? "已核对，关闭提示" : "丢弃"}</button>
             </div>
@@ -75,7 +77,7 @@ export function Composer({ autoFocus = false }: { autoFocus?: boolean }) {
         submitDisabled={!!pending || !s.session}
         placeholder={
           running
-            ? "正在处理…"
+            ? "继续输入，Enter 加入下一轮队列"
             : s.entries.length === 0
               ? "你想做什么？"
               : "输入消息（Enter 发送，Shift+Enter 换行）"
@@ -84,6 +86,8 @@ export function Composer({ autoFocus = false }: { autoFocus?: boolean }) {
         autoFocus={autoFocus}
         disabled={s.trust === "untrusted"}
         loading={running}
+        queueWhileLoading
+        submitLabel={running || s.promptQueue.items.length ? "加入队列" : "发送消息"}
         onStop={() => void store.abort()}
         leadingAction={<ContextUsageIndicator usage={s.contextUsage ?? null} />}
         skills={s.skills}
@@ -126,7 +130,7 @@ export function Composer({ autoFocus = false }: { autoFocus?: boolean }) {
             </SelectContent>
           </Select>
         ) : null}
-        onSubmit={(text) => void store.prompt(text)}
+        onSubmit={(text) => void store.submitPrompt(text)}
       />
 
     </div>

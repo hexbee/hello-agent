@@ -12,6 +12,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   AgentRebuildResult,
   AgentSnapshot,
+  PromptQueueSnapshot,
   ApprovalResolveRequest,
   AuthBeginRequest,
   AuthRemoveKeyRequest,
@@ -66,6 +67,10 @@ const INVOKE_COMMANDS = new Set<Channel>([
   "session.rename",
   "session.delete",
   "agent.prompt",
+  "agent.queue.add",
+  "agent.queue.edit",
+  "agent.queue.remove",
+  "agent.queue.control",
   "agent.abort",
   "agent.snapshot",
   "agent.rebuild",
@@ -136,6 +141,12 @@ const api = {
   agent: {
     prompt: (text: string, sessionId: string): Promise<Result<{ accepted: boolean }>> =>
       invoke("agent.prompt", { text, sessionId }),
+    queue: {
+      add: (sessionId: string, id: string, text: string): Promise<Result<PromptQueueSnapshot>> => invoke("agent.queue.add", { sessionId, id, text }),
+      edit: (sessionId: string, id: string, text: string): Promise<Result<PromptQueueSnapshot>> => invoke("agent.queue.edit", { sessionId, id, text }),
+      remove: (sessionId: string, id: string): Promise<Result<PromptQueueSnapshot>> => invoke("agent.queue.remove", { sessionId, id }),
+      control: (sessionId: string, paused: boolean): Promise<Result<PromptQueueSnapshot>> => invoke("agent.queue.control", { sessionId, paused }),
+    },
     abort: (): Promise<Result<{ aborted: true }>> => invoke("agent.abort"),
     snapshot: (): Promise<Result<AgentSnapshot>> => invoke("agent.snapshot"),
     rebuild: (): Promise<Result<AgentRebuildResult>> => invoke("agent.rebuild"),

@@ -1,4 +1,4 @@
-import type { ThinkingLevel, ModelsSelectResult } from "./commands.js";
+import type { ThinkingLevel, ModelsSelectResult, PromptQueueSnapshot } from "./commands.js";
 
 // Product event contract — docs/desktop-agent-tech-stack.md §6.1
 // Single source of truth for Main → Renderer events.
@@ -49,6 +49,8 @@ export type AgentEvent =
       message: string;
     })
   | (EventBase & { type: "model.selection"; selection: ModelsSelectResult; error?: string })
+  | (EventBase & { type: "queue.updated"; queue: PromptQueueSnapshot })
+  | (EventBase & { type: "queue.dispatched"; id: string; text: string })
   | (EventBase & { type: "context.usage"; usage: ContextUsage | null })
   | (EventBase & { type: "context.compaction"; phase: "started" | "finished" })
   | (EventBase & {
@@ -83,6 +85,7 @@ export type AgentSnapshot = {
     name: string | undefined;
   };
   agentState: "running" | "idle" | "aborted" | "failed";
+  promptQueue?: PromptQueueSnapshot;
   messages: Array<{
     messageId: string;
     role: "user" | "assistant";

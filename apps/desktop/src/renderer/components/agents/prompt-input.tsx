@@ -80,6 +80,8 @@ export interface PromptInputProps extends Omit<
   onSubmit?: (value: string, model?: string) => void | Promise<void>;
   loading?: boolean;
   submitDisabled?: boolean;
+  queueWhileLoading?: boolean;
+  submitLabel?: string;
   onStop?: () => void;
   minRows?: number;
   maxRows?: number;
@@ -130,6 +132,8 @@ export function PromptInput({
   onSubmit,
   loading = false,
   submitDisabled = false,
+  queueWhileLoading = false,
+  submitLabel = "Send prompt",
   onStop,
   minRows = 2,
   maxRows = 8,
@@ -165,7 +169,7 @@ export function PromptInput({
   const matchingSkills = skills.filter((skill) =>
     `${skill.name} ${skill.description}`.toLowerCase().includes(skillQuery),
   );
-  const skillsOpen = inputFocused && (skillBrowseOpen || skillToken) && !skillsDismissed && !disabled && !loading;
+  const skillsOpen = inputFocused && (skillBrowseOpen || skillToken) && !skillsDismissed && !disabled && (!loading || queueWhileLoading);
   const activeSkillIndex = Math.min(skillIndex, Math.max(0, matchingSkills.length - 1));
   useEffect(() => {
     setSkillBrowseOpen(false);
@@ -181,7 +185,8 @@ export function PromptInput({
     (option) => option.value === currentModelValue,
   );
   const currentMode = modes.find((option) => option.value === currentModeValue);
-  const canSubmit = Boolean(currentValue.trim()) && !disabled && !loading && !submitDisabled;
+  const stopOnly = loading && !queueWhileLoading;
+  const canSubmit = Boolean(currentValue.trim()) && !disabled && (!loading || queueWhileLoading) && !submitDisabled;
 
   const resizeTextarea = useCallback(() => {
     const textarea = textareaRef.current;
@@ -235,7 +240,7 @@ export function PromptInput({
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     const prompt = currentValue.trim();
-    if (!prompt || disabled || loading || submitDisabled) return;
+    if (!prompt || disabled || (loading && !queueWhileLoading) || submitDisabled) return;
 
     onSubmit?.(prompt, currentModelValue);
     if (value === undefined) setInternalValue("");
@@ -343,7 +348,7 @@ export function PromptInput({
       />
 
       <div className="mt-1 flex min-h-8 flex-wrap items-center gap-1">
-        <Button type="button" variant="ghost" size="icon" aria-label="选择 skill" title="选择 skill（/）" disabled={disabled || loading}
+        <Button type="button" variant="ghost" size="icon" aria-label="选择 skill" title="选择 skill（/）" disabled={disabled || (loading && !queueWhileLoading)}
           onClick={() => { setSkillBrowseOpen(true); setSkillsDismissed(false); textareaRef.current?.focus({ preventScroll: true }); }}>
           <Puzzle className="size-4" />
         </Button>
@@ -535,24 +540,31 @@ export function PromptInput({
 
         {trailingAction}
 
+        {loading && queueWhileLoading && (
+          <Button type="button" size="icon" className="ml-auto size-8 rounded-full" aria-label="停止当前任务并暂停队列"
+            title="停止当前任务并暂停队列" disabled={!onStop} onClick={onStop}>
+            <Square className="size-3 fill-current" />
+          </Button>
+        )}
         <Button
-          type={loading ? "button" : "submit"}
+          type={stopOnly ? "button" : "submit"}
           size="icon"
-          disabled={loading ? !onStop : !canSubmit}
-          aria-label={loading ? "Stop generating" : "Send prompt"}
-          onClick={loading ? onStop : undefined}
-          className="ml-auto size-8 rounded-full"
+          disabled={stopOnly ? !onStop : !canSubmit}
+          aria-label={stopOnly ? "Stop generating" : submitLabel}
+          title={stopOnly ? "Stop generating" : submitLabel}
+          onClick={stopOnly ? onStop : undefined}
+          className={cn("size-8 rounded-full", !(loading && queueWhileLoading) && "ml-auto")}
         >
           <AnimatePresence initial={false} mode="popLayout">
             <motion.span
-              key={loading ? "stop" : "send"}
+              key={stopOnly ? "stop" : "send"}
               initial={reduce ? { opacity: 1 } : { opacity: 0, y: 3, scale: 0.8 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={reduce ? { opacity: 0 } : { opacity: 0, y: -3, scale: 0.8 }}
               transition={reduce ? { duration: 0 } : SPRING_SWAP}
               className="grid place-items-center"
             >
-              {loading ? (
+              {stopOnly ? (
                 <Square className="size-3 fill-current" />
               ) : (
                 <ArrowUp className="size-4" />

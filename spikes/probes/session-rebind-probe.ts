@@ -62,6 +62,9 @@ async function main(): Promise<void> {
   const bindAfterCreate = permissions.bindCount;
   r.check("factory instantiated on create", bindAfterCreate >= 1, String(bindAfterCreate));
 
+  adapter.addQueuedPrompt(firstSession, "switch-queue", "保留在原对话中的待办");
+  adapter.controlQueue(firstSession, true);
+
   // newSession
   await adapter.newSession();
   r.check(
@@ -69,6 +72,7 @@ async function main(): Promise<void> {
     permissions.bindCount > bindAfterCreate,
   );
   r.check("newSession changed sessionId", adapter.sessionId !== firstSession);
+  r.check("newSession does not inherit queued work", adapter.queueSnapshot().items.length === 0);
   let stalePromptRejected = false;
   try {
     await adapter.prompt("must never reach the new conversation", firstSession);
@@ -85,6 +89,8 @@ async function main(): Promise<void> {
 
   await adapter.openSession(firstFile!);
   r.check("switchSession rebound factory", true);
+  r.check("reopening preserves paused queue", adapter.queueSnapshot().paused && adapter.queueSnapshot().items[0]?.id === "switch-queue");
+  adapter.removeQueuedPrompt(adapter.sessionId, "switch-queue");
   // openSession validated path containment implicitly (would throw otherwise)
   const outside = join(root, "outside.jsonl");
   writeFileSync(outside, "{}\n");

@@ -47,7 +47,7 @@ export function App() {
           <TopBar />
           {s.agentState === "failed" && (
             <div className="flex items-center justify-between border-b border-danger/30 bg-danger/10 px-4 py-1.5 text-xs text-danger">
-              <span>助手异常停止，输入已停用</span>
+              <span>助手异常停止，可检查待发送消息或重启助手</span>
               <button
                 className="cursor-pointer rounded border border-danger/40 px-2 py-0.5 hover:bg-danger/20"
                 onClick={() => void store.rebuild()}

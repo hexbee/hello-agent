@@ -4,6 +4,7 @@ export type PendingSend = {
   text: string;
   status: "sending" | "failed" | "uncertain";
   error?: string;
+  destination?: "queue";
 };
 export type ConversationDraft = { text: string; pending?: PendingSend };
 export type ConversationDrafts = Record<string, ConversationDraft>;
@@ -26,6 +27,7 @@ export function loadConversationDrafts(): ConversationDrafts {
         ["sending", "failed", "uncertain"].includes(p.status)) {
         draft.pending = { id: p.id, text: p.text,
           status: p.status === "sending" ? "uncertain" : p.status,
+          destination: p.destination === "queue" ? "queue" : undefined,
           error: p.status === "sending" ? "窗口已重新加载，请先核对对话中的发送结果。" : typeof p.error === "string" ? p.error : undefined };
       }
       drafts[key] = draft;

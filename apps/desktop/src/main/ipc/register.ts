@@ -15,6 +15,10 @@ import {
   validateSessionRename,
   validateWorkspaceTrustSet,
   validateAgentPrompt,
+  validateQueueAdd,
+  validateQueueEdit,
+  validateQueueRemove,
+  validateQueueControl,
   type CommandError,
   type Result,
 } from "@hello-agent/shared";
@@ -336,6 +340,34 @@ export function registerIpc(opts: {
       return ok(await adapter().prompt(v.data.text, v.data.sessionId));
     });
   });
+
+  ipcMain.handle("agent.queue.add", async (event, input) => wrap(() => {
+    if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
+    requireTrusted("restricted");
+    const v = validateQueueAdd(input);
+    if (!v.ok) return v;
+    return ok(adapter().addQueuedPrompt(v.data.sessionId, v.data.id, v.data.text));
+  }));
+  ipcMain.handle("agent.queue.edit", async (event, input) => wrap(() => {
+    if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
+    requireTrusted("restricted");
+    const v = validateQueueEdit(input);
+    if (!v.ok) return v;
+    return ok(adapter().editQueuedPrompt(v.data.sessionId, v.data.id, v.data.text));
+  }));
+  ipcMain.handle("agent.queue.remove", async (event, input) => wrap(() => {
+    if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
+    const v = validateQueueRemove(input);
+    if (!v.ok) return v;
+    return ok(adapter().removeQueuedPrompt(v.data.sessionId, v.data.id));
+  }));
+  ipcMain.handle("agent.queue.control", async (event, input) => wrap(() => {
+    if (!isPrimaryWindow(event)) return fail("denied", "bad sender");
+    requireTrusted("restricted");
+    const v = validateQueueControl(input);
+    if (!v.ok) return v;
+    return ok(adapter().controlQueue(v.data.sessionId, v.data.paused));
+  }));
 
   ipcMain.handle("agent.abort", async (event) => {
     return wrap(async () => {
